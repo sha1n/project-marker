@@ -1,0 +1,18 @@
+[project]
+name = "project-marker"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "sha1n",email = "sha1n@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+package-mode = false
+dependencies = [
+    "xattr (>=1.3.0,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
