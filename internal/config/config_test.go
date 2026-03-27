@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sha1n/project-marker/internal/engine"
@@ -17,7 +18,6 @@ func TestLoadDefaultConfig(t *testing.T) {
 		t.Fatalf("expected 2 targets, got %d", len(targets))
 	}
 
-	// Verify Cubase target
 	if targets[0].Name != "Cubase" {
 		t.Errorf("expected first target name 'Cubase', got %q", targets[0].Name)
 	}
@@ -28,7 +28,6 @@ func TestLoadDefaultConfig(t *testing.T) {
 		t.Errorf("expected 1 rule for Cubase, got %d", len(targets[0].Rules))
 	}
 
-	// Verify LUNA target
 	if targets[1].Name != "LUNA" {
 		t.Errorf("expected second target name 'LUNA', got %q", targets[1].Name)
 	}
@@ -103,9 +102,30 @@ targets:
 	}
 }
 
+func TestLoadFromBytes_EmptyApplyTag(t *testing.T) {
+	registry := engine.NewRegistry()
+	yaml := []byte(`
+targets:
+  - name: Test
+    indicators:
+      - type: file_extension
+        value: .test
+    rules:
+      - type: has_subdirectory
+        match: any
+        value: [Output]
+        apply_tag: ""
+`)
+	_, err := LoadFromBytes(yaml, registry)
+	if err == nil {
+		t.Fatal("expected error for empty apply_tag")
+	}
+	if !strings.Contains(err.Error(), "empty apply_tag") {
+		t.Errorf("expected 'empty apply_tag' in error, got: %v", err)
+	}
+}
+
 func TestDefaultConfigUsesOnlyRegisteredHandlers(t *testing.T) {
-	// This test validates that the embedded YAML only references
-	// handler types that are actually registered in the registry.
 	registry := engine.NewRegistry()
 	_, err := Load(registry)
 	if err != nil {

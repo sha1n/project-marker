@@ -79,6 +79,9 @@ func resolveTarget(tc TargetConfig, registry *engine.Registry) (ResolvedTarget, 
 	}
 
 	for _, rc := range tc.Rules {
+		if rc.ApplyTag == "" {
+			return rt, fmt.Errorf("rule of type %q has empty apply_tag", rc.Type)
+		}
 		rule, err := registry.CreateRule(rc.Type, rc.Value, rc.Match, rc.ApplyTag)
 		if err != nil {
 			return rt, fmt.Errorf("rule: %w", err)
