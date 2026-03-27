@@ -78,8 +78,20 @@ func run(args []string) int {
 	// Validate directories
 	for _, dir := range dirs {
 		info, err := os.Stat(dir)
-		if err != nil || !info.IsDir() {
-			fmt.Fprintf(os.Stderr, "Error: %s is not a valid directory\n", dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				if _, lstatErr := os.Lstat(dir); lstatErr == nil {
+					fmt.Fprintf(os.Stderr, "Error: %s is a symlink to a non-existent target\n", dir)
+				} else {
+					fmt.Fprintf(os.Stderr, "Error: %s does not exist\n", dir)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: %s: %v\n", dir, err)
+			}
+			return 1
+		}
+		if !info.IsDir() {
+			fmt.Fprintf(os.Stderr, "Error: %s is not a directory\n", dir)
 			return 1
 		}
 	}
