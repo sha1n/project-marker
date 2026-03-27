@@ -59,6 +59,16 @@ coverage: install
 coverage-html: coverage
 	go tool cover -html=coverage.out
 
+## release: Runs GoReleaser to create a release
+.PHONY: release
+release:
+ifdef GITHUB_TOKEN
+	@echo "  >  Releasing..."
+	goreleaser release --clean
+else
+	$(error GITHUB_TOKEN is not set)
+endif
+
 ## clean: Removes build artifacts
 .PHONY: clean
 clean:

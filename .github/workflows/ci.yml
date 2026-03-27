@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master ]
+  schedule:
+    - cron: '16 6 * * 2'
+
+permissions:
+  contents: write
+  security-events: write
+  pull-requests: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - '**'
+              - '!(README.md|docs/**)'
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.src == 'true' || github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install dependencies
+        run: make install
+      - name: Install golangci-lint
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.8.0
+      - name: Run linting and format checks
+        run: make lint
+      - name: Run tests
+        run: make coverage
+
+  go-report-card:
+    needs: changes
+    if: needs.changes.outputs.src == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request') && (github.ref == 'refs/heads/master' || github.base_ref == 'master')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Go report card
+        uses: creekorful/goreportcard-action@v1.0
+
+  status-check:
+    needs: [changes, test, go-report-card]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify status
+        run: |
+          if [[ "${{ needs.test.result }}" == "failure" ]]; then
+            echo "One or more critical jobs failed."
+            exit 1
+          fi
+          echo "All critical jobs passed or were skipped."

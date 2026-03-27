@@ -1,0 +1,93 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+categories:
+  - title: 'Features'
+    labels:
+      - 'feature'
+      - 'enhancement'
+  - title: 'Bug Fixes'
+    labels:
+      - 'fix'
+      - 'bugfix'
+      - 'bug'
+  - title: 'Documentation'
+    labels:
+      - 'documentation'
+      - 'docs'
+  - title: 'Testing'
+    labels:
+      - 'test'
+      - 'testing'
+  - title: 'Maintenance'
+    labels:
+      - 'chore'
+      - 'refactor'
+      - 'style'
+      - 'perf'
+      - 'build'
+      - 'ci'
+  - title: 'Dependency Updates'
+    labels:
+      - 'dependencies'
+      - 'deps'
+change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
+change-title-escapes: '\<*_&#@'
+version-resolver:
+  major:
+    labels:
+      - 'major'
+      - 'breaking'
+  minor:
+    labels:
+      - 'minor'
+      - 'feature'
+      - 'enhancement'
+  patch:
+    labels:
+      - 'patch'
+      - 'fix'
+      - 'bugfix'
+      - 'bug'
+      - 'chore'
+      - 'dependencies'
+      - 'documentation'
+      - 'test'
+  default: patch
+autolabeler:
+  - label: 'major'
+    title:
+      - '/!:/'
+  - label: 'feature'
+    title:
+      - '/^feat/i'
+  - label: 'fix'
+    title:
+      - '/^fix/i'
+  - label: 'documentation'
+    title:
+      - '/^docs/i'
+    files:
+      - 'README.md'
+      - 'docs/**'
+  - label: 'chore'
+    title:
+      - '/^chore/i'
+      - '/^build/i'
+      - '/^ci/i'
+      - '/^style/i'
+      - '/^refactor/i'
+      - '/^perf/i'
+  - label: 'test'
+    title:
+      - '/^test/i'
+  - label: 'dependencies'
+    title:
+      - '/^deps/i'
+    branch:
+      - '/^dependabot/'
+template: |
+  ## Changes
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/sha1n/project-marker/compare/$BASE_TAG...$NEXT_TAG
