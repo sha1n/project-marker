@@ -3,7 +3,7 @@ package scanner
 import (
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/sha1n/project-marker/internal/config"
@@ -15,11 +15,33 @@ type Tagger interface {
 	Remove(path, tag string) error
 }
 
+// EventKind classifies what happened at a directory during scanning.
+type EventKind int
+
+const (
+	EventEnter EventKind = iota // entering a directory (no match)
+	EventMatch                  // directory matched a target + rule — tagged/untagged
+	EventSkip                   // matched target but rule didn't match (no tag action)
+	EventWarn                   // walk error or other warning
+)
+
+// ScanEvent describes what happened at a single directory.
+type ScanEvent struct {
+	Kind       EventKind
+	Path       string
+	TargetName string // empty for EventEnter/EventWarn
+	Tag        string // empty unless EventMatch
+	Action     string // "tagged"/"untagged" for EventMatch
+	Message    string // for EventWarn
+}
+
 // Scanner walks directories and evaluates targets against configured indicators and rules.
 type Scanner struct {
 	Targets    []config.ResolvedTarget
 	Tagger     Tagger
 	RemoveMode bool
+	Logger     *slog.Logger
+	OnVisit    func(ScanEvent)
 }
 
 // Result tracks what the scanner did for a single directory.
@@ -30,8 +52,18 @@ type Result struct {
 	Action     string // "tagged", "untagged", "skipped", "already_tagged"
 }
 
+func (s *Scanner) emit(e ScanEvent) {
+	if s.OnVisit != nil {
+		s.OnVisit(e)
+	}
+}
+
 // Scan walks the given root directories, evaluating indicators and rules.
 func (s *Scanner) Scan(roots []string) ([]Result, error) {
+	if s.Logger == nil {
+		s.Logger = slog.New(slog.DiscardHandler)
+	}
+
 	var results []Result
 
 	for _, root := range roots {
@@ -50,7 +82,12 @@ func (s *Scanner) scanRoot(root string) ([]Result, error) {
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			log.Printf("warning: %s: %v", path, err)
+			if d == nil {
+				// Root itself is inaccessible — fatal for this root.
+				return err
+			}
+			s.Logger.Warn("walk error", "path", path, "error", err)
+			s.emit(ScanEvent{Kind: EventWarn, Path: path, Message: err.Error()})
 			return nil // Continue scanning
 		}
 
@@ -58,23 +95,32 @@ func (s *Scanner) scanRoot(root string) ([]Result, error) {
 			return nil
 		}
 
+		s.Logger.Debug("visiting directory", "path", path)
+
 		for _, target := range s.Targets {
 			matched, matchErr := evaluateIndicators(path, target)
 			if matchErr != nil {
-				log.Printf("warning: indicator error at %s: %v", path, matchErr)
+				s.Logger.Warn("indicator evaluation failed", "path", path, "target", target.Name, "error", matchErr)
+				s.emit(ScanEvent{Kind: EventWarn, Path: path, Message: matchErr.Error()})
 				continue
 			}
 			if !matched {
 				continue
 			}
 
+			s.Logger.Debug("target matched", "path", path, "target", target.Name)
+
 			// This directory matches a target — evaluate rules
 			ruleResults := s.evaluateRules(path, target)
 			results = append(results, ruleResults...)
 
 			// Skip descending into this project directory
+			s.Logger.Debug("skipping subtree", "path", path)
 			return filepath.SkipDir
 		}
+
+		// No target matched this directory
+		s.emit(ScanEvent{Kind: EventEnter, Path: path})
 
 		return nil
 	})
@@ -98,15 +144,18 @@ func evaluateIndicators(dirPath string, target config.ResolvedTarget) (bool, err
 func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []Result {
 	var results []Result
 
+	var matched bool
 	for _, rule := range target.Rules {
-		matched, tag, err := rule.Evaluate(dirPath)
+		ruleMatched, tag, err := rule.Evaluate(dirPath)
 		if err != nil {
-			log.Printf("warning: rule error at %s: %v", dirPath, err)
+			s.Logger.Warn("rule evaluation failed", "path", dirPath, "target", target.Name, "error", err)
 			continue
 		}
-		if !matched {
+		if !ruleMatched {
+			s.Logger.Debug("rule not matched", "path", dirPath, "target", target.Name)
 			continue
 		}
+		matched = true
 
 		result := Result{
 			Path:       dirPath,
@@ -116,21 +165,28 @@ func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []
 
 		if s.RemoveMode {
 			if err := s.Tagger.Remove(dirPath, tag); err != nil {
-				log.Printf("warning: failed to remove tag %q from %s: %v", tag, dirPath, err)
+				s.Logger.Warn("failed to remove tag", "tag", tag, "path", dirPath, "error", err)
 				result.Action = "skipped"
 			} else {
+				s.Logger.Debug("tag removed", "tag", tag, "path", dirPath, "target", target.Name)
 				result.Action = "untagged"
 			}
 		} else {
 			if err := s.Tagger.Apply(dirPath, tag); err != nil {
-				log.Printf("warning: failed to apply tag %q to %s: %v", tag, dirPath, err)
+				s.Logger.Warn("failed to apply tag", "tag", tag, "path", dirPath, "error", err)
 				result.Action = "skipped"
 			} else {
+				s.Logger.Debug("tag applied", "tag", tag, "path", dirPath, "target", target.Name)
 				result.Action = "tagged"
 			}
 		}
 
+		s.emit(ScanEvent{Kind: EventMatch, Path: dirPath, TargetName: target.Name, Tag: tag, Action: result.Action})
 		results = append(results, result)
+	}
+
+	if !matched {
+		s.emit(ScanEvent{Kind: EventSkip, Path: dirPath, TargetName: target.Name})
 	}
 
 	return results
