@@ -1,0 +1,22 @@
+targets:
+  - name: "Cubase"
+    indicators:
+      - type: "file_extension"
+        value: ".cpr"
+    rules:
+      - type: "has_subdirectory"
+        match: "any"
+        value:
+          - "Mixdown"
+        apply_tag: "Blue"
+
+  - name: "LUNA"
+    indicators:
+      - type: "directory_extension"
+        value: ".luna"
+    rules:
+      - type: "has_subdirectory"
+        match: "any"
+        value:
+          - "Exported Files"
+        apply_tag: "Blue"
