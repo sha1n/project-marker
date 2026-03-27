@@ -1,13 +1,20 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sha1n/project-marker/internal/config"
+	"github.com/sha1n/project-marker/internal/engine"
+	"github.com/sha1n/project-marker/internal/scanner"
 )
 
+// captureOutput redirects os.Stdout and os.Stderr for the duration of fn.
+// This mutates global state — tests in this package must NOT use t.Parallel().
 func captureOutput(t *testing.T, fn func()) (stdout, stderr string) {
 	t.Helper()
 
@@ -74,6 +81,31 @@ func setupMockWorkspace(t *testing.T) string {
 	}
 
 	return root
+}
+
+// failTagger returns configured errors from Apply/Remove.
+type failTagger struct {
+	applyErr  error
+	removeErr error
+}
+
+func (f *failTagger) Apply(_, _ string) error  { return f.applyErr }
+func (f *failTagger) Remove(_, _ string) error { return f.removeErr }
+
+// overrideLoadConfig replaces loadConfig for the duration of the test.
+func overrideLoadConfig(t *testing.T, fn func(*engine.Registry) ([]config.ResolvedTarget, error)) {
+	t.Helper()
+	orig := loadConfig
+	loadConfig = fn
+	t.Cleanup(func() { loadConfig = orig })
+}
+
+// overrideNewTagger replaces newTagger for the duration of the test.
+func overrideNewTagger(t *testing.T, tagger scanner.Tagger) {
+	t.Helper()
+	orig := newTagger
+	newTagger = func() scanner.Tagger { return tagger }
+	t.Cleanup(func() { newTagger = orig })
 }
 
 func TestRun_NoArgs(t *testing.T) {
@@ -158,6 +190,28 @@ func TestRun_BrokenSymlink(t *testing.T) {
 	}
 }
 
+func TestRun_StatPermissionError(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	badPath := filepath.Join(blocker, "child")
+
+	_, stderr := captureOutput(t, func() {
+		code := run([]string{badPath})
+		if code != 1 {
+			t.Errorf("expected exit code 1, got %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "Error:") {
+		t.Errorf("expected 'Error:' in stderr, got: %s", stderr)
+	}
+	if strings.Contains(stderr, "does not exist") {
+		t.Errorf("should not say 'does not exist' for ENOTDIR, got: %s", stderr)
+	}
+}
+
 func TestRun_Version(t *testing.T) {
 	stdout, _ := captureOutput(t, func() {
 		code := run([]string{"--version"})
@@ -193,13 +247,11 @@ func TestRun_ScanWorkspace(t *testing.T) {
 func TestRun_RemoveMode(t *testing.T) {
 	root := setupMockWorkspace(t)
 
-	// First tag
 	code := run([]string{root})
 	if code != 0 {
 		t.Fatalf("expected exit code 0 for tagging, got %d", code)
 	}
 
-	// Then remove
 	code = run([]string{"-r", root})
 	if code != 0 {
 		t.Errorf("expected exit code 0 for untagging, got %d", code)
@@ -249,5 +301,165 @@ func TestRun_CompletionFish(t *testing.T) {
 	})
 	if !strings.Contains(stdout, "complete -c projmark") {
 		t.Error("expected fish completion commands in output")
+	}
+}
+
+func TestRun_VerboseFlag(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	_, stderr := captureOutput(t, func() {
+		code := run([]string{"-v", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "◦") && !strings.Contains(stderr, "●") {
+		t.Error("expected verbose trace symbols on stderr with -v flag")
+	}
+}
+
+func TestRun_VerboseLongFlag(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	_, stderr := captureOutput(t, func() {
+		code := run([]string{"--verbose", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "◦") && !strings.Contains(stderr, "●") {
+		t.Error("expected verbose trace symbols on stderr with --verbose flag")
+	}
+}
+
+func TestRun_DebugFlag(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	_, stderr := captureOutput(t, func() {
+		code := run([]string{"--debug", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "loading configuration") {
+		t.Error("expected slog debug output on stderr with --debug flag")
+	}
+	if !strings.Contains(stderr, "starting scan") {
+		t.Error("expected 'starting scan' in debug output")
+	}
+}
+
+func TestRun_ConfigLoadFailure(t *testing.T) {
+	overrideLoadConfig(t, func(*engine.Registry) ([]config.ResolvedTarget, error) {
+		return nil, errors.New("bad config")
+	})
+	root := setupMockWorkspace(t)
+
+	_, stderr := captureOutput(t, func() {
+		code := run([]string{root})
+		if code != 1 {
+			t.Errorf("expected exit code 1, got %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "failed to load config") {
+		t.Errorf("expected 'failed to load config' in stderr, got: %s", stderr)
+	}
+}
+
+func TestRun_ScanFailure(t *testing.T) {
+	root := t.TempDir()
+	scanDir := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(scanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	overrideLoadConfig(t, func(r *engine.Registry) ([]config.ResolvedTarget, error) {
+		_ = os.RemoveAll(scanDir)
+		return config.Load(r)
+	})
+
+	_, stderr := captureOutput(t, func() {
+		code := run([]string{scanDir})
+		if code != 1 {
+			t.Errorf("expected exit code 1, got %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "scan failed") {
+		t.Errorf("expected 'scan failed' in stderr, got: %s", stderr)
+	}
+}
+
+func TestRun_SkippedInSummary(t *testing.T) {
+	root := setupMockWorkspace(t)
+	overrideNewTagger(t, &failTagger{applyErr: errors.New("xattr fail")})
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "skipped") {
+		t.Errorf("expected 'skipped' in stdout, got: %s", stdout)
+	}
+}
+
+func TestRun_Pluralize(t *testing.T) {
+	if got := pluralize(1); got != "y" {
+		t.Errorf("pluralize(1) = %q, want %q", got, "y")
+	}
+	if got := pluralize(0); got != "ies" {
+		t.Errorf("pluralize(0) = %q, want %q", got, "ies")
+	}
+	if got := pluralize(5); got != "ies" {
+		t.Errorf("pluralize(5) = %q, want %q", got, "ies")
+	}
+}
+
+func TestRun_UntaggedOutput(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{"-r", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "Untagged") {
+		t.Errorf("expected 'Untagged' in summary, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "Removing tags from") {
+		t.Errorf("expected 'Removing tags from' in stdout, got: %s", stdout)
+	}
+}
+
+func TestRun_CompletionScriptsContainAllFlags(t *testing.T) {
+	requiredFlags := []string{"-h", "-r", "--version", "--verbose", "--debug",
+		"--completion-bash", "--completion-zsh", "--completion-fish"}
+
+	tests := []struct {
+		name string
+		arg  string
+	}{
+		{"bash", "--completion-bash"},
+		{"zsh", "--completion-zsh"},
+		{"fish", "--completion-fish"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, _ := captureOutput(t, func() {
+				code := run([]string{tt.arg})
+				if code != 0 {
+					t.Fatalf("exit code %d for %s", code, tt.arg)
+				}
+			})
+			for _, flag := range requiredFlags {
+				flagName := strings.TrimLeft(flag, "-")
+				if !strings.Contains(stdout, flagName) {
+					t.Errorf("%s completion missing flag %s", tt.name, flag)
+				}
+			}
+		})
 	}
 }
