@@ -48,16 +48,8 @@ jobs:
       - name: Run tests
         run: make coverage
 
-  go-report-card:
-    needs: changes
-    if: needs.changes.outputs.src == 'true' && (github.event_name == 'push' || github.event_name == 'pull_request') && (github.ref == 'refs/heads/master' || github.base_ref == 'master')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Go report card
-        uses: creekorful/goreportcard-action@v1.0
-
   status-check:
-    needs: [changes, test, go-report-card]
+    needs: [changes, test]
     if: always()
     runs-on: ubuntu-latest
     steps:
