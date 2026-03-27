@@ -64,9 +64,29 @@ func run(args []string) int {
 
 	dirs := fs.Args()
 	if len(dirs) == 0 {
-		fmt.Fprintf(os.Stderr, "Usage: %s [-r] <directory> [directory...]\n", ProgramName)
-		fmt.Fprintf(os.Stderr, "\nOptions:\n")
-		fmt.Fprintf(os.Stderr, "  -r\tRemove tags instead of adding them\n")
+		fmt.Fprintf(os.Stderr, `Usage: %s [-r] <directory> [directory...]
+
+Scan directories and apply macOS Finder tags based on project type.
+projmark identifies music production projects (Cubase, LUNA) and tags
+directories that contain exported/mixed-down content.
+
+Options:
+  -r                    Remove tags instead of adding them
+  -version              Print version information
+  --completion-bash     Output bash completion script
+  --completion-zsh      Output zsh completion script
+  --completion-fish     Output fish completion script
+
+Examples:
+  %s ~/Music/Projects
+  %s -r ~/Music/Projects
+  %s ~/Music/Cubase ~/Music/LUNA
+
+Shell Completion:
+  Bash:  eval "$(%s --completion-bash)"
+  Zsh:   eval "$(%s --completion-zsh)"
+  Fish:  %s --completion-fish | source
+`, ProgramName, ProgramName, ProgramName, ProgramName, ProgramName, ProgramName, ProgramName)
 		return 1
 	}
 
