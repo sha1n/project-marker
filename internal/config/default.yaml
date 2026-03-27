@@ -12,7 +12,7 @@ targets:
 
   - name: "LUNA"
     indicators:
-      - type: "directory_extension"
+      - type: "file_extension"
         value: ".luna"
     rules:
       - type: "has_subdirectory"

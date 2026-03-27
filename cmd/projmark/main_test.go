@@ -70,8 +70,11 @@ func setupMockWorkspace(t *testing.T) string {
 	}
 
 	// LUNA project with Exported Files (should be tagged)
-	luna := filepath.Join(root, "Music", "Session.luna")
-	if err := os.MkdirAll(filepath.Join(luna, "Exported Files"), 0755); err != nil {
+	session := filepath.Join(root, "Music", "My Session")
+	if err := os.MkdirAll(filepath.Join(session, "My Session.luna"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(session, "Exported Files"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
