@@ -97,3 +97,24 @@ func TestRun_MultipleDirectories(t *testing.T) {
 		t.Errorf("expected exit code 0, got %d", code)
 	}
 }
+
+func TestRun_CompletionBash(t *testing.T) {
+	code := run([]string{"--completion-bash"})
+	if code != 0 {
+		t.Errorf("expected exit code 0 for --completion-bash, got %d", code)
+	}
+}
+
+func TestRun_CompletionZsh(t *testing.T) {
+	code := run([]string{"--completion-zsh"})
+	if code != 0 {
+		t.Errorf("expected exit code 0 for --completion-zsh, got %d", code)
+	}
+}
+
+func TestRun_CompletionFish(t *testing.T) {
+	code := run([]string{"--completion-fish"})
+	if code != 0 {
+		t.Errorf("expected exit code 0 for --completion-fish, got %d", code)
+	}
+}

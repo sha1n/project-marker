@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"flag"
 	"fmt"
 	"log"
@@ -11,6 +12,15 @@ import (
 	"github.com/sha1n/project-marker/internal/macostags"
 	"github.com/sha1n/project-marker/internal/scanner"
 )
+
+//go:embed completions/projmark.bash
+var bashCompletion string
+
+//go:embed completions/projmark.zsh
+var zshCompletion string
+
+//go:embed completions/projmark.fish
+var fishCompletion string
 
 var (
 	Version     = "dev"
@@ -26,6 +36,9 @@ func run(args []string) int {
 	fs := flag.NewFlagSet(ProgramName, flag.ContinueOnError)
 	removeMode := fs.Bool("r", false, "Remove tags instead of adding them")
 	version := fs.Bool("version", false, "Print version information")
+	completionBash := fs.Bool("completion-bash", false, "Output bash completion script")
+	completionZsh := fs.Bool("completion-zsh", false, "Output zsh completion script")
+	completionFish := fs.Bool("completion-fish", false, "Output fish completion script")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -33,6 +46,19 @@ func run(args []string) int {
 
 	if *version {
 		fmt.Printf("%s %s (build: %s)\n", ProgramName, Version, Build)
+		return 0
+	}
+
+	if *completionBash {
+		fmt.Print(bashCompletion)
+		return 0
+	}
+	if *completionZsh {
+		fmt.Print(zshCompletion)
+		return 0
+	}
+	if *completionFish {
+		fmt.Print(fishCompletion)
 		return 0
 	}
 
