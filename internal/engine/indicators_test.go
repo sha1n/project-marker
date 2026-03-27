@@ -77,11 +77,22 @@ func TestFileExtensionIndicator_UnreadableDir(t *testing.T) {
 
 	ind := &FileExtensionIndicator{Extension: ".cpr"}
 	match, err := ind.IsMatch(restricted)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("expected error for unreadable directory")
 	}
 	if match {
 		t.Error("expected no match for unreadable directory")
+	}
+}
+
+func TestFileExtensionIndicator_NonexistentDir(t *testing.T) {
+	ind := &FileExtensionIndicator{Extension: ".cpr"}
+	match, err := ind.IsMatch("/nonexistent/path")
+	if err != nil {
+		t.Errorf("expected nil error for nonexistent dir, got: %v", err)
+	}
+	if match {
+		t.Error("expected no match for nonexistent directory")
 	}
 }
 
@@ -132,6 +143,35 @@ func TestDirectoryExtensionIndicator_NoExtension(t *testing.T) {
 	}
 }
 
+func TestDirectoryExtensionIndicator_NonexistentPath(t *testing.T) {
+	ind := &DirectoryExtensionIndicator{Extension: ".luna"}
+	match, err := ind.IsMatch("/nonexistent/Session.luna")
+	if err != nil {
+		t.Errorf("expected nil error for nonexistent path, got: %v", err)
+	}
+	if match {
+		t.Error("expected no match for nonexistent path")
+	}
+}
+
+func TestDirectoryExtensionIndicator_StatError(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	childPath := filepath.Join(blocker, "Session.luna")
+
+	ind := &DirectoryExtensionIndicator{Extension: ".luna"}
+	match, err := ind.IsMatch(childPath)
+	if err == nil {
+		t.Fatal("expected error for path through a file")
+	}
+	if match {
+		t.Error("expected no match on error")
+	}
+}
+
 func TestFileExistsIndicator_Match(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644); err != nil {
@@ -174,5 +214,33 @@ func TestFileExistsIndicator_Missing(t *testing.T) {
 	}
 	if match {
 		t.Error("expected no match when file doesn't exist")
+	}
+}
+
+func TestFileExistsIndicator_NonexistentDir(t *testing.T) {
+	ind := &FileExistsIndicator{FileName: "package.json"}
+	match, err := ind.IsMatch("/nonexistent/path")
+	if err != nil {
+		t.Errorf("expected nil error for nonexistent dir, got: %v", err)
+	}
+	if match {
+		t.Error("expected no match for nonexistent directory")
+	}
+}
+
+func TestFileExistsIndicator_StatError(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ind := &FileExistsIndicator{FileName: "package.json"}
+	match, err := ind.IsMatch(blocker)
+	if err == nil {
+		t.Fatal("expected error for stat through a file")
+	}
+	if match {
+		t.Error("expected no match on error")
 	}
 }

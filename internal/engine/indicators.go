@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,10 @@ func NewFileExtensionIndicator(value string) (Indicator, error) {
 func (i *FileExtensionIndicator) IsMatch(dirPath string) (bool, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
-		return false, nil
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("reading directory %s: %w", dirPath, err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), i.Extension) {
@@ -42,7 +46,10 @@ func NewDirectoryExtensionIndicator(value string) (Indicator, error) {
 func (i *DirectoryExtensionIndicator) IsMatch(dirPath string) (bool, error) {
 	info, err := os.Stat(dirPath)
 	if err != nil {
-		return false, nil
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat %s: %w", dirPath, err)
 	}
 	if !info.IsDir() {
 		return false, nil
@@ -63,7 +70,10 @@ func NewFileExistsIndicator(value string) (Indicator, error) {
 func (i *FileExistsIndicator) IsMatch(dirPath string) (bool, error) {
 	info, err := os.Stat(filepath.Join(dirPath, i.FileName))
 	if err != nil {
-		return false, nil
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat %s: %w", filepath.Join(dirPath, i.FileName), err)
 	}
 	return !info.IsDir(), nil
 }
