@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 
@@ -89,7 +88,8 @@ func run(args []string) int {
 	registry := engine.NewRegistry()
 	targets, err := config.Load(registry)
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+		return 1
 	}
 
 	// Run scanner
@@ -110,7 +110,8 @@ func run(args []string) int {
 
 	results, err := s.Scan(dirs)
 	if err != nil {
-		log.Fatalf("scan error: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: scan failed: %v\n", err)
+		return 1
 	}
 
 	for _, r := range results {
