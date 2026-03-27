@@ -28,8 +28,8 @@ func captureOutput(t *testing.T, fn func()) (stdout, stderr string) {
 
 	fn()
 
-	wOut.Close()
-	wErr.Close()
+	_ = wOut.Close()
+	_ = wErr.Close()
 
 	outBytes, _ := io.ReadAll(rOut)
 	errBytes, _ := io.ReadAll(rErr)

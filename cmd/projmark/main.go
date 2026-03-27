@@ -178,7 +178,7 @@ Shell Completion:
   Zsh:   eval "$({{name}} --completion-zsh)"
   Fish:  {{name}} --completion-fish | source
 `
-	strings.NewReplacer("{{name}}", ProgramName).WriteString(w, usageTemplate)
+	_, _ = strings.NewReplacer("{{name}}", ProgramName).WriteString(w, usageTemplate)
 }
 
 func pluralize(n int) string {
