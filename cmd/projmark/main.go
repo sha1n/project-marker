@@ -114,12 +114,15 @@ func run(args []string) int {
 		return 1
 	}
 
+	var actionedCount int
 	for _, r := range results {
 		switch r.Action {
 		case "tagged":
 			fmt.Printf("  ✓ Tagged [%s] %s (%s)\n", r.Tag, r.Path, r.TargetName)
+			actionedCount++
 		case "untagged":
 			fmt.Printf("  ✓ Untagged [%s] %s (%s)\n", r.Tag, r.Path, r.TargetName)
+			actionedCount++
 		case "skipped":
 			fmt.Printf("  ✗ Skipped %s (%s)\n", r.Path, r.TargetName)
 		}
@@ -129,7 +132,12 @@ func run(args []string) int {
 	if *removeMode {
 		actionWord = "Untagged"
 	}
-	fmt.Printf("\nComplete! %s %d director%s.\n", actionWord, len(results), pluralize(len(results)))
+	skippedCount := len(results) - actionedCount
+	fmt.Printf("\nComplete! %s %d director%s", actionWord, actionedCount, pluralize(actionedCount))
+	if skippedCount > 0 {
+		fmt.Printf(" (%d skipped)", skippedCount)
+	}
+	fmt.Println(".")
 
 	return 0
 }
