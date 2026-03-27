@@ -1,4 +1,7 @@
+complete -c projmark -s h -d 'Show help message'
 complete -c projmark -s r -d 'Remove tags instead of adding them'
+complete -c projmark -s v -l verbose -d 'Show directory scan trace with colors'
+complete -c projmark -l debug -d 'Enable debug logging'
 complete -c projmark -l version -d 'Print version information'
 complete -c projmark -l completion-bash -d 'Output bash completion script'
 complete -c projmark -l completion-zsh -d 'Output zsh completion script'

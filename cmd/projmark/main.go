@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -30,6 +31,16 @@ var (
 	ProgramName = "projmark"
 )
 
+// Overridable dependencies for testing.
+var (
+	loadConfig = func(r *engine.Registry) ([]config.ResolvedTarget, error) {
+		return config.Load(r)
+	}
+	newTagger = func() scanner.Tagger {
+		return &macostags.Tagger{}
+	}
+)
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -39,6 +50,10 @@ func run(args []string) int {
 	fs.Usage = func() { printUsage(os.Stderr) }
 
 	removeMode := fs.Bool("r", false, "Remove tags instead of adding them")
+	var verbose bool
+	fs.BoolVar(&verbose, "v", false, "Enable verbose output")
+	fs.BoolVar(&verbose, "verbose", false, "Enable verbose output")
+	debug := fs.Bool("debug", false, "Enable debug logging")
 	version := fs.Bool("version", false, "Print version information")
 	completionBash := fs.Bool("completion-bash", false, "Output bash completion script")
 	completionZsh := fs.Bool("completion-zsh", false, "Output zsh completion script")
@@ -96,19 +111,41 @@ func run(args []string) int {
 		}
 	}
 
+	// Set up logger
+	logLevel := slog.LevelWarn
+	if *debug {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: logLevel,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	}))
+
 	// Load configuration
+	logger.Debug("loading configuration")
 	registry := engine.NewRegistry()
-	targets, err := config.Load(registry)
+	targets, err := loadConfig(registry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
 		return 1
 	}
+	logger.Debug("configuration loaded", "targets", len(targets))
 
 	// Run scanner
 	s := &scanner.Scanner{
 		Targets:    targets,
-		Tagger:     &macostags.Tagger{},
+		Tagger:     newTagger(),
 		RemoveMode: *removeMode,
+		Logger:     logger,
+	}
+
+	if verbose {
+		s.OnVisit = verboseHandler(dirs, os.Stderr, isTTY(os.Stderr))
 	}
 
 	action := "Scanning"
@@ -120,6 +157,7 @@ func run(args []string) int {
 		fmt.Printf("%s: %s\n", action, dir)
 	}
 
+	logger.Debug("starting scan", "roots", dirs, "remove_mode", *removeMode)
 	results, err := s.Scan(dirs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: scan failed: %v\n", err)
@@ -162,6 +200,8 @@ Scan directories and apply macOS Finder tags based on project type.
 directories that contain exported/mixed-down content.
 
 Options:
+  -v, --verbose         Show directory scan trace with colors
+  --debug               Enable debug logging (structured, for developers)
   -r                    Remove tags instead of adding them
   --version             Print version information
   --completion-bash     Output bash completion script
