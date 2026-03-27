@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// FileExtensionIndicator matches directories containing a file with the given extension.
+// FileExtensionIndicator matches directories containing an entry (file or directory) with the given extension.
 type FileExtensionIndicator struct {
 	Extension string
 }
@@ -26,7 +26,7 @@ func (i *FileExtensionIndicator) IsMatch(dirPath string) (bool, error) {
 		return false, fmt.Errorf("reading directory %s: %w", dirPath, err)
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), i.Extension) {
+		if strings.EqualFold(filepath.Ext(entry.Name()), i.Extension) {
 			return true, nil
 		}
 	}
@@ -57,7 +57,7 @@ func (i *DirectoryExtensionIndicator) IsMatch(dirPath string) (bool, error) {
 	return strings.EqualFold(filepath.Ext(info.Name()), i.Extension), nil
 }
 
-// FileExistsIndicator matches directories containing a specific file (not a directory).
+// FileExistsIndicator matches directories containing a specific entry (file or directory).
 type FileExistsIndicator struct {
 	FileName string
 }
@@ -68,12 +68,12 @@ func NewFileExistsIndicator(value string) (Indicator, error) {
 }
 
 func (i *FileExistsIndicator) IsMatch(dirPath string) (bool, error) {
-	info, err := os.Stat(filepath.Join(dirPath, i.FileName))
+	_, err := os.Stat(filepath.Join(dirPath, i.FileName))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("stat %s: %w", filepath.Join(dirPath, i.FileName), err)
 	}
-	return !info.IsDir(), nil
+	return true, nil
 }
