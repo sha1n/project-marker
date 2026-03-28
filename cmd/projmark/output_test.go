@@ -159,6 +159,96 @@ func TestVerboseHandler_UnknownEventKind(t *testing.T) {
 	}
 }
 
+func TestVerboseHandler_DryRunAction(t *testing.T) {
+	var buf bytes.Buffer
+	handler := verboseHandler([]string{"/root"}, &buf, false)
+
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionWouldTag})
+
+	output := buf.String()
+	if !strings.Contains(output, "○") {
+		t.Errorf("expected open circle symbol for dry-run action, got: %s", output)
+	}
+	if strings.Contains(output, "●") {
+		t.Errorf("expected open circle, not filled circle for dry-run action, got: %s", output)
+	}
+}
+
+func TestVerboseHandler_DryRunActionWithColor(t *testing.T) {
+	var buf bytes.Buffer
+	handler := verboseHandler([]string{"/root"}, &buf, true)
+
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionWouldTag})
+
+	output := buf.String()
+	if !strings.Contains(output, "○") {
+		t.Errorf("expected open circle symbol for dry-run action, got: %s", output)
+	}
+	if !strings.Contains(output, colorDim) {
+		t.Errorf("expected dim color for dry-run action, got: %s", output)
+	}
+}
+
+func TestVerboseHandler_DryRunWouldUntag(t *testing.T) {
+	var buf bytes.Buffer
+	handler := verboseHandler([]string{"/root"}, &buf, false)
+
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionWouldUntag})
+
+	output := buf.String()
+	if !strings.Contains(output, "○") {
+		t.Errorf("expected open circle symbol for would_untag action, got: %s", output)
+	}
+	if strings.Contains(output, "●") {
+		t.Errorf("expected open circle, not filled circle for would_untag, got: %s", output)
+	}
+}
+
+func TestVerboseHandler_DryRunWouldUntagWithColor(t *testing.T) {
+	var buf bytes.Buffer
+	handler := verboseHandler([]string{"/root"}, &buf, true)
+
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionWouldUntag})
+
+	output := buf.String()
+	if !strings.Contains(output, "○") {
+		t.Errorf("expected open circle symbol for would_untag, got: %s", output)
+	}
+	if !strings.Contains(output, colorDim) {
+		t.Errorf("expected dim color for would_untag, got: %s", output)
+	}
+}
+
+func TestVerboseHandler_AlreadyTagged(t *testing.T) {
+	var buf bytes.Buffer
+	handler := verboseHandler([]string{"/root"}, &buf, false)
+
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionAlreadyTagged})
+
+	output := buf.String()
+	if !strings.Contains(output, "=") {
+		t.Errorf("expected '=' symbol for already_tagged action, got: %s", output)
+	}
+	if strings.Contains(output, "●") {
+		t.Errorf("expected '=' symbol, not filled circle for already_tagged, got: %s", output)
+	}
+}
+
+func TestVerboseHandler_AlreadyTaggedWithColor(t *testing.T) {
+	var buf bytes.Buffer
+	handler := verboseHandler([]string{"/root"}, &buf, true)
+
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionAlreadyTagged})
+
+	output := buf.String()
+	if !strings.Contains(output, "=") {
+		t.Errorf("expected '=' symbol for already_tagged action, got: %s", output)
+	}
+	if !strings.Contains(output, colorDim) {
+		t.Errorf("expected dim color for already_tagged action, got: %s", output)
+	}
+}
+
 func TestIsTTY_ClosedFile(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "tty-test")
 	if err != nil {

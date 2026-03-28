@@ -9,10 +9,27 @@ import (
 	"github.com/sha1n/project-marker/internal/config"
 )
 
+// Action constants describe what the scanner did (or would do) for a directory.
+const (
+	ActionTagged        = "tagged"
+	ActionUntagged      = "untagged"
+	ActionSkipped       = "skipped"
+	ActionAlreadyTagged = "already_tagged"
+	ActionWouldTag      = "would_tag"
+	ActionWouldUntag    = "would_untag"
+)
+
 // Tagger applies or removes tags on filesystem paths.
 type Tagger interface {
 	Apply(path, tag string) error
 	Remove(path, tag string) error
+}
+
+// TagChecker is an optional interface that a Tagger may implement to check
+// whether a tag is already present on a path. This enables accurate dry-run
+// reporting (e.g. "already_tagged" vs "would_tag").
+type TagChecker interface {
+	HasTag(path, tag string) (bool, error)
 }
 
 // EventKind classifies what happened at a directory during scanning.
@@ -31,7 +48,7 @@ type ScanEvent struct {
 	Path       string
 	TargetName string // empty for EventEnter/EventWarn
 	Tag        string // empty unless EventMatch
-	Action     string // ActionTagged/ActionUntagged for EventMatch
+	Action     string // Action constant for EventMatch
 	Message    string // for EventWarn
 }
 
@@ -40,23 +57,17 @@ type Scanner struct {
 	Targets    []config.ResolvedTarget
 	Tagger     Tagger
 	RemoveMode bool
+	DryRun     bool
 	Logger     *slog.Logger
 	OnVisit    func(ScanEvent)
 }
-
-// Action constants describe what was done to a directory.
-const (
-	ActionTagged   = "tagged"
-	ActionUntagged = "untagged"
-	ActionSkipped  = "skipped"
-)
 
 // Result tracks what the scanner did for a single directory.
 type Result struct {
 	Path       string
 	TargetName string
 	Tag        string
-	Action     string // ActionTagged, ActionUntagged, ActionSkipped
+	Action     string // ActionTagged, ActionUntagged, ActionSkipped, ActionAlreadyTagged, ActionWouldTag, ActionWouldUntag
 }
 
 func (s *Scanner) emit(e ScanEvent) {
@@ -170,7 +181,39 @@ func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []
 			Tag:        tag,
 		}
 
-		if s.RemoveMode {
+		if s.DryRun {
+			if checker, ok := s.Tagger.(TagChecker); ok {
+				hasTag, checkErr := checker.HasTag(dirPath, tag)
+				if checkErr != nil {
+					s.Logger.Warn("failed to check tag (dry run)", "tag", tag, "path", dirPath, "error", checkErr)
+				}
+				if s.RemoveMode {
+					if hasTag {
+						s.Logger.Debug("would remove tag (dry run)", "tag", tag, "path", dirPath, "target", target.Name)
+						result.Action = ActionWouldUntag
+					} else {
+						s.Logger.Debug("tag not present, nothing to remove (dry run)", "tag", tag, "path", dirPath, "target", target.Name)
+						result.Action = ActionSkipped
+					}
+				} else {
+					if hasTag {
+						s.Logger.Debug("already tagged (dry run)", "tag", tag, "path", dirPath, "target", target.Name)
+						result.Action = ActionAlreadyTagged
+					} else {
+						s.Logger.Debug("would apply tag (dry run)", "tag", tag, "path", dirPath, "target", target.Name)
+						result.Action = ActionWouldTag
+					}
+				}
+			} else {
+				if s.RemoveMode {
+					s.Logger.Debug("would remove tag (dry run)", "tag", tag, "path", dirPath, "target", target.Name)
+					result.Action = ActionWouldUntag
+				} else {
+					s.Logger.Debug("would apply tag (dry run)", "tag", tag, "path", dirPath, "target", target.Name)
+					result.Action = ActionWouldTag
+				}
+			}
+		} else if s.RemoveMode {
 			if err := s.Tagger.Remove(dirPath, tag); err != nil {
 				s.Logger.Warn("failed to remove tag", "tag", tag, "path", dirPath, "error", err)
 				result.Action = ActionSkipped

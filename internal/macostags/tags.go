@@ -104,3 +104,17 @@ func (t *Tagger) Apply(path, tag string) error {
 func (t *Tagger) Remove(path, tag string) error {
 	return RemoveTag(path, tag)
 }
+
+// HasTag checks whether the given tag is present on the path.
+func (t *Tagger) HasTag(path, tag string) (bool, error) {
+	tags, err := GetTags(path)
+	if err != nil {
+		return false, err
+	}
+	for _, existing := range tags {
+		if existing == tag {
+			return true, nil
+		}
+	}
+	return false, nil
+}
