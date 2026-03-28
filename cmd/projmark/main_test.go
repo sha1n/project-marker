@@ -95,6 +95,26 @@ type failTagger struct {
 func (f *failTagger) Apply(_, _ string) error  { return f.applyErr }
 func (f *failTagger) Remove(_, _ string) error { return f.removeErr }
 
+// alwaysTaggedTagger records Apply/Remove calls and always reports tags as present.
+type alwaysTaggedTagger struct {
+	applied []string
+	removed []string
+}
+
+func (m *alwaysTaggedTagger) Apply(path, _ string) error {
+	m.applied = append(m.applied, path)
+	return nil
+}
+
+func (m *alwaysTaggedTagger) Remove(path, _ string) error {
+	m.removed = append(m.removed, path)
+	return nil
+}
+
+func (m *alwaysTaggedTagger) HasTag(_, _ string) (bool, error) {
+	return true, nil
+}
+
 // overrideLoadConfig replaces loadConfig for the duration of the test.
 func overrideLoadConfig(t *testing.T, fn func(*engine.Registry) ([]config.ResolvedTarget, error)) {
 	t.Helper()
@@ -465,6 +485,23 @@ func TestRun_OutputUsesRelativePaths(t *testing.T) {
 	}
 }
 
+func TestRun_DryRunFlag(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{"--dry-run", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "Would tag") {
+		t.Errorf("expected 'Would tag' in stdout, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "Dry run") {
+		t.Errorf("expected 'Dry run' in stdout, got: %s", stdout)
+	}
+}
+
 func TestRun_MultiRootGroupedOutput(t *testing.T) {
 	root1 := setupMockWorkspace(t)
 	root2 := setupMockWorkspace(t)
@@ -491,6 +528,21 @@ func TestRun_MultiRootGroupedOutput(t *testing.T) {
 	between := stdout[idx1:idx2]
 	if !strings.Contains(between, "\n\n") {
 		t.Errorf("expected blank line between root groups, got: %q", between)
+	}
+}
+
+func TestRun_DryRunVerbose(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	_, stderr := captureOutput(t, func() {
+		code := run([]string{"--dry-run", "-v", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	// Verbose handler should emit open circle for dry-run would_tag events
+	if !strings.Contains(stderr, "○") {
+		t.Errorf("expected open circle in verbose dry-run output, got: %s", stderr)
 	}
 }
 
@@ -568,9 +620,61 @@ func TestRun_EmptyResultsForOneRoot(t *testing.T) {
 	}
 }
 
+func TestRun_DryRunRemoveMode(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{"--dry-run", "-r", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "Dry run") {
+		t.Errorf("expected 'Dry run' in stdout, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "Removing tags from") {
+		t.Errorf("expected 'Removing tags from' in stdout, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "Would untag") {
+		t.Errorf("expected 'Would untag' in summary, got: %s", stdout)
+	}
+}
+
+func TestRun_DryRunWouldUntagOutput(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	overrideNewTagger(t, &alwaysTaggedTagger{})
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{"--dry-run", "-r", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "Would untag") {
+		t.Errorf("expected 'Would untag' result line in stdout, got: %s", stdout)
+	}
+}
+
+func TestRun_DryRunAlreadyTaggedOutput(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	overrideNewTagger(t, &alwaysTaggedTagger{})
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{"--dry-run", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "Already tagged") {
+		t.Errorf("expected 'Already tagged' result line in stdout, got: %s", stdout)
+	}
+}
+
 func TestRun_CompletionScriptsContainAllFlags(t *testing.T) {
 	requiredFlags := []string{"-h", "-r", "--version", "--verbose", "--debug",
-		"--completion-bash", "--completion-zsh", "--completion-fish"}
+		"--dry-run", "--completion-bash", "--completion-zsh", "--completion-fish"}
 
 	tests := []struct {
 		name string

@@ -15,5 +15,6 @@ func RemoveTag(path, tag string) error         { return ErrUnsupportedPlatform }
 // Tagger implements the scanner.Tagger interface as a no-op on non-darwin platforms.
 type Tagger struct{}
 
-func (t *Tagger) Apply(path, tag string) error  { return ErrUnsupportedPlatform }
-func (t *Tagger) Remove(path, tag string) error { return ErrUnsupportedPlatform }
+func (t *Tagger) Apply(path, tag string) error          { return ErrUnsupportedPlatform }
+func (t *Tagger) Remove(path, tag string) error         { return ErrUnsupportedPlatform }
+func (t *Tagger) HasTag(path, tag string) (bool, error) { return false, ErrUnsupportedPlatform }

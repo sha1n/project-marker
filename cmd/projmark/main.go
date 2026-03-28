@@ -52,6 +52,7 @@ func run(args []string) int {
 	fs.Usage = func() { printUsage(os.Stderr) }
 
 	removeMode := fs.Bool("r", false, "Remove tags instead of adding them")
+	dryRun := fs.Bool("dry-run", false, "Show what would be tagged without making changes")
 	var verbose bool
 	fs.BoolVar(&verbose, "v", false, "Enable verbose output")
 	fs.BoolVar(&verbose, "verbose", false, "Enable verbose output")
@@ -143,6 +144,7 @@ func run(args []string) int {
 		Targets:    targets,
 		Tagger:     newTagger(),
 		RemoveMode: *removeMode,
+		DryRun:     *dryRun,
 		Logger:     logger,
 	}
 
@@ -154,8 +156,11 @@ func run(args []string) int {
 	if *removeMode {
 		action = "Removing tags from"
 	}
+	if *dryRun {
+		action = "Dry run — " + action
+	}
 
-	logger.Debug("starting scan", "roots", dirs, "remove_mode", *removeMode)
+	logger.Debug("starting scan", "roots", dirs, "remove_mode", *removeMode, "dry_run", *dryRun)
 
 	var allResults []scanner.Result
 	var actionedCount int
@@ -182,6 +187,14 @@ func run(args []string) int {
 			case scanner.ActionUntagged:
 				_, _ = fmt.Fprintf(w, "  ✓ Untagged\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
 				actionedCount++
+			case scanner.ActionWouldTag:
+				_, _ = fmt.Fprintf(w, "  ~ Would tag\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
+				actionedCount++
+			case scanner.ActionWouldUntag:
+				_, _ = fmt.Fprintf(w, "  ~ Would untag\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
+				actionedCount++
+			case scanner.ActionAlreadyTagged:
+				_, _ = fmt.Fprintf(w, "  = Already tagged\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
 			case scanner.ActionSkipped:
 				_, _ = fmt.Fprintf(w, "  ✗ Skipped\t\t%s\t(%s)\n", rel, r.TargetName)
 			}
@@ -193,6 +206,13 @@ func run(args []string) int {
 	actionWord := "Tagged"
 	if *removeMode {
 		actionWord = "Untagged"
+	}
+	if *dryRun {
+		if *removeMode {
+			actionWord = "Would untag"
+		} else {
+			actionWord = "Would tag"
+		}
 	}
 	skippedCount := len(allResults) - actionedCount
 	fmt.Printf("\nComplete! %s %d director%s", actionWord, actionedCount, pluralize(actionedCount))
@@ -215,6 +235,7 @@ Options:
   -v, --verbose         Show directory scan trace with colors
   --debug               Enable debug logging (structured, for developers)
   -r                    Remove tags instead of adding them
+  --dry-run             Show what would be tagged without making changes
   --version             Print version information
   --completion-bash     Output bash completion script
   --completion-zsh      Output zsh completion script
@@ -223,6 +244,7 @@ Options:
 Examples:
   {{name}} ~/Music/Projects
   {{name}} -r ~/Music/Projects
+  {{name}} --dry-run ~/Music/Projects
   {{name}} ~/Music/Cubase ~/Music/LUNA
 
 Shell Completion:

@@ -62,6 +62,14 @@ func verboseHandler(roots []string, w io.Writer, color bool) func(scanner.ScanEv
 			if e.Action == scanner.ActionUntagged {
 				c = colorCyan
 			}
+			if e.Action == scanner.ActionAlreadyTagged {
+				symbol = "="
+				c = colorDim
+			}
+			if e.Action == scanner.ActionWouldTag || e.Action == scanner.ActionWouldUntag {
+				symbol = "○"
+				c = colorDim
+			}
 			detail := fmt.Sprintf("%s [%s]", e.TargetName, e.Tag)
 			if color {
 				_, _ = fmt.Fprintf(w, "%s%s%s %s  %s%s\n", indent, c, symbol, name, detail, colorReset)

@@ -10,6 +10,7 @@ _projmark() {
         '--version[Print version information]' \
         '--completion-bash[Output bash completion script]' \
         '--completion-zsh[Output zsh completion script]' \
+        '--dry-run[Show what would be tagged without making changes]' \
         '--completion-fish[Output fish completion script]' \
         '*:directory:_directories'
 }

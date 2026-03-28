@@ -6,4 +6,5 @@ complete -c projmark -l version -d 'Print version information'
 complete -c projmark -l completion-bash -d 'Output bash completion script'
 complete -c projmark -l completion-zsh -d 'Output zsh completion script'
 complete -c projmark -l completion-fish -d 'Output fish completion script'
+complete -c projmark -l dry-run -d 'Show what would be tagged without making changes'
 complete -c projmark -F
