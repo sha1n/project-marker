@@ -222,6 +222,21 @@ func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []
 				result.Action = ActionUntagged
 			}
 		} else {
+			// Check if the tag is already present (graceful: fall through on error or missing interface).
+			// Note: for newly-tagged paths, HasTag + Apply reads xattrs twice. This is acceptable
+			// for the typical number of matched directories.
+			if checker, ok := s.Tagger.(TagChecker); ok {
+				already, checkErr := checker.HasTag(dirPath, tag)
+				if checkErr != nil {
+					s.Logger.Warn("HasTag check failed, falling through to Apply", "tag", tag, "path", dirPath, "error", checkErr)
+				} else if already {
+					result.Action = ActionAlreadyTagged
+					s.emit(ScanEvent{Kind: EventMatch, Path: dirPath, TargetName: target.Name, Tag: tag, Action: result.Action})
+					results = append(results, result)
+					continue
+				}
+			}
+
 			if err := s.Tagger.Apply(dirPath, tag); err != nil {
 				s.Logger.Warn("failed to apply tag", "tag", tag, "path", dirPath, "error", err)
 				result.Action = ActionSkipped

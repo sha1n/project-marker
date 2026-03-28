@@ -249,6 +249,21 @@ func TestVerboseHandler_AlreadyTaggedWithColor(t *testing.T) {
 	}
 }
 
+func TestVerboseHandler_AlreadyTaggedNoColor(t *testing.T) {
+	var buf bytes.Buffer
+	handler := verboseHandler([]string{"/root"}, &buf, false)
+
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionAlreadyTagged})
+
+	output := buf.String()
+	if !strings.Contains(output, "=") {
+		t.Error("expected '=' symbol for already_tagged action")
+	}
+	if strings.Contains(output, "\033[") {
+		t.Error("expected no ANSI escape codes with color=false")
+	}
+}
+
 func TestIsTTY_ClosedFile(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "tty-test")
 	if err != nil {
