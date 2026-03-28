@@ -51,7 +51,7 @@ func TestFileExtensionIndicator_EmptyDir(t *testing.T) {
 	}
 }
 
-func TestFileExtensionIndicator_IgnoresDirectories(t *testing.T) {
+func TestFileExtensionIndicator_MatchesDirectories(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "subdir.cpr"), 0755); err != nil {
 		t.Fatal(err)
@@ -62,8 +62,8 @@ func TestFileExtensionIndicator_IgnoresDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if match {
-		t.Error("expected no match for directory entry with extension")
+	if !match {
+		t.Error("expected match for directory containing subdirectory with extension")
 	}
 }
 
@@ -199,8 +199,8 @@ func TestFileExistsIndicator_DirectoryWithSameName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if match {
-		t.Error("expected no match when package.json is a directory")
+	if !match {
+		t.Error("expected match even if package.json is a directory")
 	}
 }
 

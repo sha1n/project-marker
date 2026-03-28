@@ -31,7 +31,7 @@ type ScanEvent struct {
 	Path       string
 	TargetName string // empty for EventEnter/EventWarn
 	Tag        string // empty unless EventMatch
-	Action     string // "tagged"/"untagged" for EventMatch
+	Action     string // ActionTagged/ActionUntagged for EventMatch
 	Message    string // for EventWarn
 }
 
@@ -44,12 +44,19 @@ type Scanner struct {
 	OnVisit    func(ScanEvent)
 }
 
+// Action constants describe what was done to a directory.
+const (
+	ActionTagged   = "tagged"
+	ActionUntagged = "untagged"
+	ActionSkipped  = "skipped"
+)
+
 // Result tracks what the scanner did for a single directory.
 type Result struct {
 	Path       string
 	TargetName string
 	Tag        string
-	Action     string // "tagged", "untagged", "skipped", "already_tagged"
+	Action     string // ActionTagged, ActionUntagged, ActionSkipped
 }
 
 func (s *Scanner) emit(e ScanEvent) {
@@ -166,18 +173,18 @@ func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []
 		if s.RemoveMode {
 			if err := s.Tagger.Remove(dirPath, tag); err != nil {
 				s.Logger.Warn("failed to remove tag", "tag", tag, "path", dirPath, "error", err)
-				result.Action = "skipped"
+				result.Action = ActionSkipped
 			} else {
 				s.Logger.Debug("tag removed", "tag", tag, "path", dirPath, "target", target.Name)
-				result.Action = "untagged"
+				result.Action = ActionUntagged
 			}
 		} else {
 			if err := s.Tagger.Apply(dirPath, tag); err != nil {
 				s.Logger.Warn("failed to apply tag", "tag", tag, "path", dirPath, "error", err)
-				result.Action = "skipped"
+				result.Action = ActionSkipped
 			} else {
 				s.Logger.Debug("tag applied", "tag", tag, "path", dirPath, "target", target.Name)
-				result.Action = "tagged"
+				result.Action = ActionTagged
 			}
 		}
 
