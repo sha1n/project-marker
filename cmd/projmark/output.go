@@ -58,17 +58,16 @@ func verboseHandler(roots []string, w io.Writer, color bool) func(scanner.ScanEv
 			}
 
 		case scanner.EventMatch:
-			symbol, c := "●", colorGreen
-			if e.Action == scanner.ActionUntagged {
-				c = colorCyan
-			}
-			if e.Action == scanner.ActionAlreadyTagged {
-				symbol = "="
-				c = colorDim
-			}
-			if e.Action == scanner.ActionWouldTag || e.Action == scanner.ActionWouldUntag {
-				symbol = "○"
-				c = colorDim
+			var symbol, c string
+			switch e.Action {
+			case scanner.ActionUntagged:
+				symbol, c = "●", colorCyan
+			case scanner.ActionAlreadyTagged:
+				symbol, c = "=", colorDim
+			case scanner.ActionWouldTag, scanner.ActionWouldUntag:
+				symbol, c = "○", colorDim
+			default:
+				symbol, c = "●", colorGreen
 			}
 			detail := fmt.Sprintf("%s [%s]", e.TargetName, e.Tag)
 			if color {

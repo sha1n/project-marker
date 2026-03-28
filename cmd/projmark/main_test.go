@@ -702,3 +702,21 @@ func TestRun_CompletionScriptsContainAllFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestRun_AlreadyTaggedOutput(t *testing.T) {
+	root := setupMockWorkspace(t)
+	overrideNewTagger(t, &alwaysTaggedTagger{})
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "Already tagged") {
+		t.Errorf("expected 'Already tagged' in stdout, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "already tagged") {
+		t.Errorf("expected 'already tagged' in summary, got: %s", stdout)
+	}
+}

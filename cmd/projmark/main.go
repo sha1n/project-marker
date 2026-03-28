@@ -164,6 +164,7 @@ func run(args []string) int {
 
 	var allResults []scanner.Result
 	var actionedCount int
+	var alreadyCount int
 
 	for i, dir := range dirs {
 		if i > 0 {
@@ -195,6 +196,7 @@ func run(args []string) int {
 				actionedCount++
 			case scanner.ActionAlreadyTagged:
 				_, _ = fmt.Fprintf(w, "  = Already tagged\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
+				alreadyCount++
 			case scanner.ActionSkipped:
 				_, _ = fmt.Fprintf(w, "  ✗ Skipped\t\t%s\t(%s)\n", rel, r.TargetName)
 			}
@@ -214,10 +216,13 @@ func run(args []string) int {
 			actionWord = "Would tag"
 		}
 	}
-	skippedCount := len(allResults) - actionedCount
+	skippedCount := len(allResults) - actionedCount - alreadyCount
 	fmt.Printf("\nComplete! %s %d director%s", actionWord, actionedCount, pluralize(actionedCount))
 	if skippedCount > 0 {
 		fmt.Printf(" (%d skipped)", skippedCount)
+	}
+	if alreadyCount > 0 {
+		fmt.Printf(" (%d already tagged)", alreadyCount)
 	}
 	fmt.Println(".")
 

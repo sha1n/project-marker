@@ -154,6 +154,47 @@ func TestGetTags_MissingFile(t *testing.T) {
 	}
 }
 
+func TestTagger_HasTag(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "test.txt")
+	if err := os.WriteFile(file, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tagger := &Tagger{}
+
+	// No tags yet
+	has, err := tagger.HasTag(file, "Blue")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if has {
+		t.Error("expected HasTag=false for untagged file")
+	}
+
+	// Add a tag and check
+	if err := tagger.Apply(file, "Blue"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	has, err = tagger.HasTag(file, "Blue")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true after Apply")
+	}
+
+	// Check for a different tag
+	has, err = tagger.HasTag(file, "Red")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if has {
+		t.Error("expected HasTag=false for non-applied tag")
+	}
+}
+
 func TestTagger_ApplyAndRemove(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "test.txt")

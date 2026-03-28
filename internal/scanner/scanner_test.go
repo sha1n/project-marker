@@ -79,6 +79,20 @@ type errorRule struct{ err error }
 
 func (e *errorRule) Evaluate(string) (bool, string, error) { return false, "", e.err }
 
+// mockTaggerWithChecker embeds mockTagger and adds TagChecker support.
+type mockTaggerWithChecker struct {
+	mockTagger
+	hasTag    map[string]bool // key: "path\x00tag"
+	hasTagErr error
+}
+
+func (m *mockTaggerWithChecker) HasTag(path, tag string) (bool, error) {
+	if m.hasTagErr != nil {
+		return false, m.hasTagErr
+	}
+	return m.hasTag[path+"\x00"+tag], nil
+}
+
 // failTagger returns configured errors from Apply/Remove.
 type failTagger struct {
 	applyErr  error
@@ -746,6 +760,123 @@ func setupProjectDir(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	return root, projectDir
+}
+
+func TestScan_AlreadyTagged(t *testing.T) {
+	root, projectDir := setupProjectDir(t)
+
+	tagger := newMockTagCheckerTagger()
+	tagger.setTag(projectDir, "Blue")
+
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:  tagger,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionAlreadyTagged {
+		t.Errorf("expected action %s, got %s", ActionAlreadyTagged, results[0].Action)
+	}
+	if len(tagger.applied) != 0 {
+		t.Errorf("expected 0 apply calls, got %d", len(tagger.applied))
+	}
+}
+
+func TestScan_AlreadyTagged_WithoutChecker(t *testing.T) {
+	root, _ := setupProjectDir(t)
+
+	tagger := &mockTagger{}
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:  tagger,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionTagged {
+		t.Errorf("expected action %s, got %s", ActionTagged, results[0].Action)
+	}
+	if len(tagger.applied) != 1 {
+		t.Errorf("expected 1 apply call, got %d", len(tagger.applied))
+	}
+}
+
+func TestScan_AlreadyTagged_RemoveModeSkipsCheck(t *testing.T) {
+	root := t.TempDir()
+
+	projectDir := filepath.Join(root, "Track1")
+	if err := os.MkdirAll(filepath.Join(projectDir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "Track1.cpr"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tagger := &mockTaggerWithChecker{
+		hasTag: map[string]bool{projectDir + "\x00" + "Blue": true},
+	}
+	s := &Scanner{
+		Targets:    []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:     tagger,
+		RemoveMode: true,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	// In remove mode, HasTag should NOT be checked — action should be "untagged", not "already_tagged"
+	if results[0].Action != ActionUntagged {
+		t.Errorf("expected action untagged in remove mode, got %s", results[0].Action)
+	}
+}
+
+func TestScan_AlreadyTagged_HasTagError(t *testing.T) {
+	root, _ := setupProjectDir(t)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	tagger := &failingTagCheckerTagger{hasTagErr: errors.New("xattr read fail")}
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:  tagger,
+		Logger:  logger,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	// Should fall through to Apply after HasTag error
+	if results[0].Action != ActionTagged {
+		t.Errorf("expected action %s (fallthrough after HasTag error), got %s", ActionTagged, results[0].Action)
+	}
+	// Warning should be logged about the HasTag failure
+	if !strings.Contains(logBuf.String(), "HasTag check failed") {
+		t.Errorf("expected warning about failed tag check in logs, got: %s", logBuf.String())
+	}
 }
 
 func TestScan_DryRunAlreadyTagged(t *testing.T) {
