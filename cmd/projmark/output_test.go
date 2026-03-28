@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestVerboseHandler_EventKinds(t *testing.T) {
 	handler := verboseHandler([]string{"/root"}, &buf, false)
 
 	handler(scanner.ScanEvent{Kind: scanner.EventEnter, Path: "/root/Music/Track1"})
-	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Music/Track1", TargetName: "Cubase", Tag: "Blue", Action: "tagged"})
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Music/Track1", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionTagged})
 	handler(scanner.ScanEvent{Kind: scanner.EventSkip, Path: "/root/Music/Track2", TargetName: "Cubase"})
 	handler(scanner.ScanEvent{Kind: scanner.EventWarn, Path: "/root/Music/Broken", Message: "permission denied"})
 
@@ -95,7 +96,7 @@ func TestVerboseHandler_NoANSIWithoutColor(t *testing.T) {
 	var buf bytes.Buffer
 	handler := verboseHandler([]string{"/root"}, &buf, false)
 
-	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: "tagged"})
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionTagged})
 
 	if strings.Contains(buf.String(), "\033[") {
 		t.Error("expected no ANSI escape codes with color=false")
@@ -106,7 +107,7 @@ func TestVerboseHandler_ANSIWithColor(t *testing.T) {
 	var buf bytes.Buffer
 	handler := verboseHandler([]string{"/root"}, &buf, true)
 
-	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: "tagged"})
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionTagged})
 
 	if !strings.Contains(buf.String(), "\033[") {
 		t.Error("expected ANSI escape codes with color=true")
@@ -140,7 +141,7 @@ func TestVerboseHandler_UntaggedColor(t *testing.T) {
 	var buf bytes.Buffer
 	handler := verboseHandler([]string{"/root"}, &buf, true)
 
-	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: "untagged"})
+	handler(scanner.ScanEvent{Kind: scanner.EventMatch, Path: "/root/Track", TargetName: "Cubase", Tag: "Blue", Action: scanner.ActionUntagged})
 
 	if !strings.Contains(buf.String(), "\033[36m") {
 		t.Error("expected cyan ANSI code for untagged action")
@@ -168,4 +169,35 @@ func TestIsTTY_ClosedFile(t *testing.T) {
 	if isTTY(f) {
 		t.Error("expected false for closed file")
 	}
+}
+
+func TestShortestRelPath(t *testing.T) {
+	t.Run("single root, path under it", func(t *testing.T) {
+		root := "/Users/foo/Music/Projects"
+		path := filepath.Join(root, "Track1")
+		got := shortestRelPath(path, []string{root})
+		if got != "Track1" {
+			t.Errorf("shortestRelPath(%q, [%q]) = %q, want %q", path, root, got, "Track1")
+		}
+	})
+
+	t.Run("multiple roots, returns shortest", func(t *testing.T) {
+		root1 := "/Users/foo/Music"
+		root2 := "/Users/foo/Music/Projects"
+		path := filepath.Join(root2, "Track1")
+		got := shortestRelPath(path, []string{root1, root2})
+		if got != "Track1" {
+			t.Errorf("shortestRelPath = %q, want %q", got, "Track1")
+		}
+	})
+
+	t.Run("path not under any root returns absolute", func(t *testing.T) {
+		root := "/Users/foo/Music"
+		path := "/Users/bar/Other/Track1"
+		got := shortestRelPath(path, []string{root})
+		// With the ".." filter, paths not under any root should remain absolute
+		if got != path {
+			t.Errorf("shortestRelPath = %q, want original path %q", got, path)
+		}
+	})
 }

@@ -104,7 +104,7 @@ func TestScan_FindsNestedProject(t *testing.T) {
 	if results[0].Tag != "Blue" {
 		t.Errorf("expected tag Blue, got %s", results[0].Tag)
 	}
-	if results[0].Action != "tagged" {
+	if results[0].Action != ActionTagged {
 		t.Errorf("expected action tagged, got %s", results[0].Action)
 	}
 	if len(tagger.applied) != 1 {
@@ -165,7 +165,7 @@ func TestScan_RemoveMode(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0].Action != "untagged" {
+	if results[0].Action != ActionUntagged {
 		t.Errorf("expected action untagged, got %s", results[0].Action)
 	}
 	if len(tagger.removed) != 1 {
@@ -550,7 +550,7 @@ func TestScan_ApplyTaggerError(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0].Action != "skipped" {
+	if results[0].Action != ActionSkipped {
 		t.Errorf("expected action skipped, got %s", results[0].Action)
 	}
 }
@@ -580,7 +580,7 @@ func TestScan_RemoveModeTaggerError(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0].Action != "skipped" {
+	if results[0].Action != ActionSkipped {
 		t.Errorf("expected action skipped, got %s", results[0].Action)
 	}
 }

@@ -8,7 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/sha1n/project-marker/internal/config"
 	"github.com/sha1n/project-marker/internal/engine"
@@ -153,36 +155,46 @@ func run(args []string) int {
 		action = "Removing tags from"
 	}
 
-	for _, dir := range dirs {
-		fmt.Printf("%s: %s\n", action, dir)
-	}
-
 	logger.Debug("starting scan", "roots", dirs, "remove_mode", *removeMode)
-	results, err := s.Scan(dirs)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: scan failed: %v\n", err)
-		return 1
-	}
 
+	var allResults []scanner.Result
 	var actionedCount int
-	for _, r := range results {
-		switch r.Action {
-		case "tagged":
-			fmt.Printf("  ✓ Tagged [%s] %s (%s)\n", r.Tag, r.Path, r.TargetName)
-			actionedCount++
-		case "untagged":
-			fmt.Printf("  ✓ Untagged [%s] %s (%s)\n", r.Tag, r.Path, r.TargetName)
-			actionedCount++
-		case "skipped":
-			fmt.Printf("  ✗ Skipped %s (%s)\n", r.Path, r.TargetName)
+
+	for i, dir := range dirs {
+		if i > 0 {
+			fmt.Println()
 		}
+		fmt.Printf("%s: %s\n", action, dir)
+
+		rootResults, err := s.Scan([]string{dir})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: scan failed: %v\n", err)
+			return 1
+		}
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		for _, r := range rootResults {
+			rel := shortestRelPath(r.Path, dirs)
+			switch r.Action {
+			case scanner.ActionTagged:
+				_, _ = fmt.Fprintf(w, "  ✓ Tagged\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
+				actionedCount++
+			case scanner.ActionUntagged:
+				_, _ = fmt.Fprintf(w, "  ✓ Untagged\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
+				actionedCount++
+			case scanner.ActionSkipped:
+				_, _ = fmt.Fprintf(w, "  ✗ Skipped\t\t%s\t(%s)\n", rel, r.TargetName)
+			}
+		}
+		_ = w.Flush()
+		allResults = append(allResults, rootResults...)
 	}
 
 	actionWord := "Tagged"
 	if *removeMode {
 		actionWord = "Untagged"
 	}
-	skippedCount := len(results) - actionedCount
+	skippedCount := len(allResults) - actionedCount
 	fmt.Printf("\nComplete! %s %d director%s", actionWord, actionedCount, pluralize(actionedCount))
 	if skippedCount > 0 {
 		fmt.Printf(" (%d skipped)", skippedCount)
@@ -219,6 +231,20 @@ Shell Completion:
   Fish:  {{name}} --completion-fish | source
 `
 	_, _ = strings.NewReplacer("{{name}}", ProgramName).WriteString(w, usageTemplate)
+}
+
+func findRoot(path string, roots []string) string {
+	path = filepath.Clean(path)
+	best := ""
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if strings.HasPrefix(path, root+string(filepath.Separator)) || path == root {
+			if len(root) > len(best) {
+				best = root
+			}
+		}
+	}
+	return best
 }
 
 func pluralize(n int) string {

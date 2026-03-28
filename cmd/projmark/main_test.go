@@ -436,6 +436,138 @@ func TestRun_UntaggedOutput(t *testing.T) {
 	}
 }
 
+func TestRun_OutputUsesRelativePaths(t *testing.T) {
+	root := setupMockWorkspace(t)
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	// The header should contain the full temp dir path
+	if !strings.Contains(stdout, "Scanning: "+root) {
+		t.Errorf("expected header with full root path, got: %s", stdout)
+	}
+	// Result lines should use relative paths (just the directory name), not the full temp dir
+	lines := strings.Split(stdout, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "✓") || strings.Contains(line, "✗") {
+			// Result lines should NOT contain the root prefix
+			if strings.Contains(line, root) {
+				t.Errorf("result line should use relative path, but contains root prefix: %s", line)
+			}
+		}
+	}
+	// Should contain just directory names like "Track1"
+	if !strings.Contains(stdout, "Track1") {
+		t.Errorf("expected 'Track1' directory name in output, got: %s", stdout)
+	}
+}
+
+func TestRun_MultiRootGroupedOutput(t *testing.T) {
+	root1 := setupMockWorkspace(t)
+	root2 := setupMockWorkspace(t)
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{root1, root2})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	// Each root should get its own header
+	if !strings.Contains(stdout, "Scanning: "+root1) {
+		t.Errorf("expected 'Scanning: %s' header, got: %s", root1, stdout)
+	}
+	if !strings.Contains(stdout, "Scanning: "+root2) {
+		t.Errorf("expected 'Scanning: %s' header, got: %s", root2, stdout)
+	}
+	// There should be a blank line between the two root groups
+	idx1 := strings.Index(stdout, "Scanning: "+root1)
+	idx2 := strings.Index(stdout, "Scanning: "+root2)
+	if idx1 >= idx2 {
+		t.Fatal("expected root1 header before root2 header")
+	}
+	between := stdout[idx1:idx2]
+	if !strings.Contains(between, "\n\n") {
+		t.Errorf("expected blank line between root groups, got: %q", between)
+	}
+}
+
+func TestFindRoot(t *testing.T) {
+	tests := []struct {
+		name  string
+		path  string
+		roots []string
+		want  string
+	}{
+		{
+			name:  "path under root",
+			path:  "/a/b/c",
+			roots: []string{"/a/b"},
+			want:  "/a/b",
+		},
+		{
+			name:  "path equals root",
+			path:  "/a/b",
+			roots: []string{"/a/b"},
+			want:  "/a/b",
+		},
+		{
+			name:  "path not under any root",
+			path:  "/x/y/z",
+			roots: []string{"/a/b"},
+			want:  "",
+		},
+		{
+			name:  "trailing slash on root",
+			path:  "/a/b/c",
+			roots: []string{"/a/b/"},
+			want:  "/a/b",
+		},
+		{
+			name:  "nested roots returns most specific",
+			path:  "/a/b/c/d",
+			roots: []string{"/a/b", "/a/b/c"},
+			want:  "/a/b/c",
+		},
+		{
+			name:  "nested roots reversed order",
+			path:  "/a/b/c/d",
+			roots: []string{"/a/b/c", "/a/b"},
+			want:  "/a/b/c",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findRoot(tt.path, tt.roots)
+			if got != tt.want {
+				t.Errorf("findRoot(%q, %v) = %q, want %q", tt.path, tt.roots, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRun_EmptyResultsForOneRoot(t *testing.T) {
+	root1 := setupMockWorkspace(t)
+	root2 := t.TempDir() // empty — no projects to match
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{root1, root2})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	// Both roots should get headers
+	if !strings.Contains(stdout, "Scanning: "+root1) {
+		t.Errorf("expected header for root1, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "Scanning: "+root2) {
+		t.Errorf("expected header for root2, got: %s", stdout)
+	}
+}
+
 func TestRun_CompletionScriptsContainAllFlags(t *testing.T) {
 	requiredFlags := []string{"-h", "-r", "--version", "--verbose", "--debug",
 		"--completion-bash", "--completion-zsh", "--completion-fish"}

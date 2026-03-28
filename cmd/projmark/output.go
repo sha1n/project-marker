@@ -26,14 +26,19 @@ func isTTY(f *os.File) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
+func shortestRelPath(path string, roots []string) string {
+	rel := path
+	for _, root := range roots {
+		if r, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(r, "..") && len(r) < len(rel) {
+			rel = r
+		}
+	}
+	return rel
+}
+
 func verboseHandler(roots []string, w io.Writer, color bool) func(scanner.ScanEvent) {
 	return func(e scanner.ScanEvent) {
-		rel := e.Path
-		for _, root := range roots {
-			if r, err := filepath.Rel(root, e.Path); err == nil && len(r) < len(rel) {
-				rel = r
-			}
-		}
+		rel := shortestRelPath(e.Path, roots)
 
 		// Skip the root directory itself
 		if rel == "." {
@@ -54,7 +59,7 @@ func verboseHandler(roots []string, w io.Writer, color bool) func(scanner.ScanEv
 
 		case scanner.EventMatch:
 			symbol, c := "●", colorGreen
-			if e.Action == "untagged" {
+			if e.Action == scanner.ActionUntagged {
 				c = colorCyan
 			}
 			detail := fmt.Sprintf("%s [%s]", e.TargetName, e.Tag)
