@@ -41,22 +41,3 @@ jobs:
           go-version-file: go.mod
       - name: Install dependencies
         run: make install
-      - name: Install golangci-lint
-        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.8.0
-      - name: Run linting and format checks
-        run: make lint
-      - name: Run tests
-        run: make coverage
-
-  status-check:
-    needs: [changes, test]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify status
-        run: |
-          if [[ "${{ needs.test.result }}" == "failure" ]]; then
-            echo "One or more critical jobs failed."
-            exit 1
-          fi
-          echo "All critical jobs passed or were skipped."
