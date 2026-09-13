@@ -9,96 +9,91 @@ import (
 	"strings"
 )
 
+// MatchMode selects whether all or any of a rule's subdirectories must qualify.
+type MatchMode string
+
 const (
-	matchAll = "all"
-	matchAny = "any"
+	// MatchAll requires every listed subdirectory to qualify.
+	MatchAll MatchMode = "all"
+	// MatchAny requires at least one listed subdirectory to qualify.
+	MatchAny MatchMode = "any"
 )
 
 var errFileFound = errors.New("file found")
 
 // HasSubdirectoryRule checks for the presence of subdirectories.
-// Match mode "all" (default) requires all listed subdirectories to exist.
-// Match mode "any" requires at least one to exist.
+// Match mode MatchAll (default) requires all listed subdirectories to exist.
+// Match mode MatchAny requires at least one to exist.
 type HasSubdirectoryRule struct {
 	Subdirectories []string
-	Match          string
+	Match          MatchMode
 	ApplyTag       string
 }
 
 // NewHasSubdirectoryRule creates a HasSubdirectoryRule.
 func NewHasSubdirectoryRule(values []string, match string, applyTag string) (TagRule, error) {
-	match, err := resolveMatchMode(match)
+	mode, err := resolveMatchMode(match)
 	if err != nil {
 		return nil, err
 	}
 	return &HasSubdirectoryRule{
 		Subdirectories: values,
-		Match:          match,
+		Match:          mode,
 		ApplyTag:       applyTag,
 	}, nil
 }
 
 func (r *HasSubdirectoryRule) Evaluate(dirPath string) (bool, string, error) {
-	if r.Match == matchAny {
-		return r.evaluateAny(dirPath)
+	requireAll, err := r.Match.requireAll()
+	if err != nil {
+		return false, "", err
 	}
-	return r.evaluateAll(dirPath)
-}
-
-func (r *HasSubdirectoryRule) evaluateAll(dirPath string) (bool, string, error) {
-	for _, sub := range r.Subdirectories {
-		if !isSubdirectory(dirPath, sub) {
-			return false, "", nil
-		}
-	}
-	return true, r.ApplyTag, nil
-}
-
-func (r *HasSubdirectoryRule) evaluateAny(dirPath string) (bool, string, error) {
-	for _, sub := range r.Subdirectories {
-		if isSubdirectory(dirPath, sub) {
-			return true, r.ApplyTag, nil
-		}
-	}
-	return false, "", nil
+	return evaluateSubdirectories(dirPath, r.Subdirectories, requireAll, r.ApplyTag, isSubdirectory)
 }
 
 // SubdirectoryHasFilesRule checks that subdirectories contain at least one
 // non-hidden regular file at any depth.
-// Match mode "all" (default) requires every listed subdirectory to qualify.
-// Match mode "any" requires at least one to qualify.
+// Match mode MatchAll (default) requires every listed subdirectory to qualify.
+// Match mode MatchAny requires at least one to qualify.
 type SubdirectoryHasFilesRule struct {
 	Subdirectories []string
-	Match          string
+	Match          MatchMode
 	ApplyTag       string
 }
 
 // NewSubdirectoryHasFilesRule creates a SubdirectoryHasFilesRule.
 func NewSubdirectoryHasFilesRule(values []string, match string, applyTag string) (TagRule, error) {
-	match, err := resolveMatchMode(match)
+	mode, err := resolveMatchMode(match)
 	if err != nil {
 		return nil, err
 	}
 	return &SubdirectoryHasFilesRule{
 		Subdirectories: values,
-		Match:          match,
+		Match:          mode,
 		ApplyTag:       applyTag,
 	}, nil
 }
 
 func (r *SubdirectoryHasFilesRule) Evaluate(dirPath string) (bool, string, error) {
-	requireAll := r.Match != matchAny
+	requireAll, err := r.Match.requireAll()
+	if err != nil {
+		return false, "", err
+	}
+	return evaluateSubdirectories(dirPath, r.Subdirectories, requireAll, r.ApplyTag, subdirectoryHasFiles)
+}
+
+func evaluateSubdirectories(dirPath string, subdirs []string, requireAll bool, applyTag string, qualifies func(parent, name string) (bool, error)) (bool, string, error) {
 	var unknown []error
-	for _, sub := range r.Subdirectories {
-		qualifies, err := subdirectoryHasFiles(dirPath, sub)
+	for _, sub := range subdirs {
+		ok, err := qualifies(dirPath, sub)
 		switch {
 		case err != nil:
 			// An undecided subdirectory must not abort evaluation: a later one
 			// may still settle the outcome regardless of it.
 			unknown = append(unknown, err)
-		case qualifies && !requireAll:
-			return true, r.ApplyTag, nil
-		case !qualifies && requireAll:
+		case ok && !requireAll:
+			return true, applyTag, nil
+		case !ok && requireAll:
 			return false, "", nil
 		}
 	}
@@ -106,7 +101,7 @@ func (r *SubdirectoryHasFilesRule) Evaluate(dirPath string) (bool, string, error
 		return false, "", errors.Join(unknown...)
 	}
 	if requireAll {
-		return true, r.ApplyTag, nil
+		return true, applyTag, nil
 	}
 	return false, "", nil
 }
@@ -155,20 +150,32 @@ func subdirectoryHasFiles(parent, name string) (bool, error) {
 	return false, nil
 }
 
-func resolveMatchMode(match string) (string, error) {
+func resolveMatchMode(match string) (MatchMode, error) {
 	if match == "" {
-		return matchAll, nil
+		return MatchAll, nil
 	}
-	if match != matchAll && match != matchAny {
+	if match != string(MatchAll) && match != string(MatchAny) {
 		return "", fmt.Errorf("invalid match mode %q: must be \"all\" or \"any\"", match)
 	}
-	return match, nil
+	return MatchMode(match), nil
 }
 
-func isSubdirectory(parent, name string) bool {
-	info, err := os.Stat(filepath.Join(parent, name))
+func (m MatchMode) requireAll() (bool, error) {
+	mode, err := resolveMatchMode(string(m))
 	if err != nil {
-		return false
+		return false, err
 	}
-	return info.IsDir()
+	return mode == MatchAll, nil
+}
+
+func isSubdirectory(parent, name string) (bool, error) {
+	path := filepath.Join(parent, name)
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking %q: %w", path, err)
+	}
+	return info.IsDir(), nil
 }

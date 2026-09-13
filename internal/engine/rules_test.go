@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -132,6 +135,158 @@ func TestHasSubdirectoryRule_InvalidMatchMode(t *testing.T) {
 	_, err := NewHasSubdirectoryRule([]string{"a"}, "invalid", "Blue")
 	if err == nil {
 		t.Error("expected error for invalid match mode")
+	}
+}
+
+func setupHasSubdirectoryPermissionFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(dir, "Locked")
+	if err := os.MkdirAll(filepath.Join(locked, "Inner"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Locking the parent, not "Inner" itself, makes stat-ing "Locked/Inner"
+	// fail with a permission error rather than a not-exist error.
+	lockTestDir(t, locked)
+	return dir
+}
+
+func TestHasSubdirectoryRule_AllErrorsOnUnreadableSubdirectory(t *testing.T) {
+	dir := setupHasSubdirectoryPermissionFixture(t)
+
+	rule := &HasSubdirectoryRule{
+		Subdirectories: []string{filepath.Join("Locked", "Inner")},
+		Match:          "all",
+		ApplyTag:       "Blue",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err == nil {
+		t.Fatal("expected error when a subdirectory cannot be statted")
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("expected error to wrap fs.ErrPermission, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match when a subdirectory cannot be statted")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestHasSubdirectoryRule_AllMissingSubdirectoryShortCircuitsOverError(t *testing.T) {
+	dir := setupHasSubdirectoryPermissionFixture(t)
+
+	rule := &HasSubdirectoryRule{
+		Subdirectories: []string{filepath.Join("Locked", "Inner"), "Missing"},
+		Match:          "all",
+		ApplyTag:       "Blue",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error when a subdirectory definitively does not qualify, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match when a listed subdirectory does not exist")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestHasSubdirectoryRule_AllErrorsWhenNoDefinitiveMismatch(t *testing.T) {
+	dir := setupHasSubdirectoryPermissionFixture(t)
+
+	rule := &HasSubdirectoryRule{
+		Subdirectories: []string{filepath.Join("Locked", "Inner"), "Mixdown"},
+		Match:          "all",
+		ApplyTag:       "Blue",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err == nil {
+		t.Fatal("expected error when the only other subdirectory qualifies but one could not be checked")
+	}
+	if matched {
+		t.Error("expected no match when a subdirectory could not be checked")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestHasSubdirectoryRule_AnyQualifyingSubdirectoryOverridesError(t *testing.T) {
+	dir := setupHasSubdirectoryPermissionFixture(t)
+
+	rule := &HasSubdirectoryRule{
+		Subdirectories: []string{filepath.Join("Locked", "Inner"), "Mixdown"},
+		Match:          "any",
+		ApplyTag:       "Blue",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error when another subdirectory qualifies in any mode, got %v", err)
+	}
+	if !matched {
+		t.Error("expected match when another subdirectory qualifies")
+	}
+	if tag != "Blue" {
+		t.Errorf("expected tag Blue, got %q", tag)
+	}
+}
+
+func TestHasSubdirectoryRule_AnyErrorsWhenNoSubdirectoryQualifies(t *testing.T) {
+	dir := setupHasSubdirectoryPermissionFixture(t)
+
+	rule := &HasSubdirectoryRule{
+		Subdirectories: []string{filepath.Join("Locked", "Inner"), "Missing"},
+		Match:          "any",
+		ApplyTag:       "Blue",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err == nil {
+		t.Fatal("expected error when no subdirectory qualifies and one could not be checked")
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("expected error to wrap fs.ErrPermission, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match when no subdirectory qualifies")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestHasSubdirectoryRule_SymlinkedSubdirectoryFollowed(t *testing.T) {
+	dir := t.TempDir()
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(dir, "Mixdown")); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &HasSubdirectoryRule{
+		Subdirectories: []string{"Mixdown"},
+		Match:          "all",
+		ApplyTag:       "Blue",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error for a symlinked subdirectory pointing to a real directory, got %v", err)
+	}
+	if !matched {
+		t.Error("expected match when Mixdown is a symlink to a real directory")
+	}
+	if tag != "Blue" {
+		t.Errorf("expected tag Blue, got %q", tag)
 	}
 }
 
@@ -663,5 +818,140 @@ func TestSubdirectoryHasFilesRule_DanglingSymlinkSubdirectory(t *testing.T) {
 	}
 	if tag != "" {
 		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func setupMatchModeFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Real Mixdown/ and Audio/take.wav mean a silent fall-through to "all"
+	// would match, so these tests would pass even if invalid modes were
+	// never rejected; asserting err/matched/tag together closes that gap.
+	writeTestFile(t, filepath.Join(dir, "Audio", "take.wav"))
+	return dir
+}
+
+func TestHasSubdirectoryRule_InvalidMatchModeReturnsError(t *testing.T) {
+	dir := setupMatchModeFixture(t)
+
+	rule := &HasSubdirectoryRule{
+		Subdirectories: []string{"Mixdown"},
+		Match:          "sometimes",
+		ApplyTag:       "Blue",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err == nil || !strings.Contains(err.Error(), `invalid match mode "sometimes"`) {
+		t.Fatalf(`expected error containing invalid match mode "sometimes", got %v`, err)
+	}
+	if matched {
+		t.Error("expected no match for an invalid match mode")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_InvalidMatchModeReturnsError(t *testing.T) {
+	dir := setupMatchModeFixture(t)
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "sometimes",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err == nil || !strings.Contains(err.Error(), `invalid match mode "sometimes"`) {
+		t.Fatalf(`expected error containing invalid match mode "sometimes", got %v`, err)
+	}
+	if matched {
+		t.Error("expected no match for an invalid match mode")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestHasSubdirectoryRule_ZeroMatchModeDefaultsToAll(t *testing.T) {
+	dir := setupMatchModeFixture(t)
+
+	// A second, non-existent subdirectory distinguishes the zero value from
+	// "any": "any" would match on Mixdown alone.
+	rule := &HasSubdirectoryRule{
+		Subdirectories: []string{"Mixdown", "NoSuchDir"},
+		ApplyTag:       "Blue",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error for the zero-value match mode, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match, since the zero value must behave as \"all\"")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_ZeroMatchModeDefaultsToAll(t *testing.T) {
+	dir := setupMatchModeFixture(t)
+	// Mixdown from the fixture is empty (no files), the "all"-vs-"any"
+	// distinguishing case needed here: "any" would match on Audio alone.
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio", "Mixdown"},
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error for the zero-value match mode, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match, since the zero value must behave as \"all\"")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestNewHasSubdirectoryRule_ResolvesTypedMatchMode(t *testing.T) {
+	anyRule, err := NewHasSubdirectoryRule([]string{"a"}, "any", "Blue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hsRule := anyRule.(*HasSubdirectoryRule); hsRule.Match != MatchAny {
+		t.Errorf("expected Match to be MatchAny, got %q", hsRule.Match)
+	}
+
+	defaultRule, err := NewHasSubdirectoryRule([]string{"a"}, "", "Blue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hsRule := defaultRule.(*HasSubdirectoryRule); hsRule.Match != MatchAll {
+		t.Errorf("expected Match to be MatchAll, got %q", hsRule.Match)
+	}
+}
+
+func TestNewSubdirectoryHasFilesRule_ResolvesTypedMatchMode(t *testing.T) {
+	anyRule, err := NewSubdirectoryHasFilesRule([]string{"a"}, "any", "Green")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shfRule := anyRule.(*SubdirectoryHasFilesRule); shfRule.Match != MatchAny {
+		t.Errorf("expected Match to be MatchAny, got %q", shfRule.Match)
+	}
+
+	defaultRule, err := NewSubdirectoryHasFilesRule([]string{"a"}, "", "Green")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shfRule := defaultRule.(*SubdirectoryHasFilesRule); shfRule.Match != MatchAll {
+		t.Errorf("expected Match to be MatchAll, got %q", shfRule.Match)
 	}
 }

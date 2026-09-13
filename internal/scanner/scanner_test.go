@@ -575,6 +575,69 @@ func TestScan_RuleEvaluationError(t *testing.T) {
 	}
 }
 
+func TestScan_RuleErrorEmitsWarnEvent(t *testing.T) {
+	root := t.TempDir()
+
+	projectDir := filepath.Join(root, "Track1")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "Track1.cpr"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := engine.NewRegistry()
+	ind, err := registry.CreateIndicator("file_extension", ".cpr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target := config.ResolvedTarget{
+		Name:       "Cubase",
+		Indicators: []engine.Indicator{ind},
+		Rules:      []engine.TagRule{&errorRule{err: errors.New("rule boom")}},
+	}
+
+	var events []ScanEvent
+
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{target},
+		Tagger:  &mockTagger{},
+		OnVisit: func(e ScanEvent) { events = append(events, e) },
+	}
+
+	results, scanErr := s.Scan([]string{root})
+	if scanErr != nil {
+		t.Fatal(scanErr)
+	}
+
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+
+	var warnEvents []ScanEvent
+	for _, e := range events {
+		if e.Kind == EventWarn {
+			warnEvents = append(warnEvents, e)
+		}
+	}
+
+	if len(warnEvents) != 1 {
+		t.Fatalf("expected exactly 1 EventWarn, got %d: %+v", len(warnEvents), warnEvents)
+	}
+
+	warn := warnEvents[0]
+	if warn.Path != projectDir {
+		t.Errorf("expected Path %q, got %q", projectDir, warn.Path)
+	}
+	if warn.Message != "rule boom" {
+		t.Errorf("expected Message %q, got %q", "rule boom", warn.Message)
+	}
+	if warn.TargetName != "" {
+		t.Errorf("expected empty TargetName, got %q", warn.TargetName)
+	}
+}
+
 func TestScan_ApplyTaggerError(t *testing.T) {
 	root := t.TempDir()
 

@@ -167,6 +167,7 @@ func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []
 		ruleMatched, tag, err := rule.Evaluate(dirPath)
 		if err != nil {
 			s.Logger.Warn("rule evaluation failed", "path", dirPath, "target", target.Name, "error", err)
+			s.emit(ScanEvent{Kind: EventWarn, Path: dirPath, Message: err.Error()})
 			continue
 		}
 		if !ruleMatched {
