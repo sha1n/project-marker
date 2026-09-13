@@ -455,3 +455,213 @@ func TestSubdirectoryHasFilesRule_UnreadableNestedDirectory(t *testing.T) {
 		t.Error("expected error when a nested directory cannot be read")
 	}
 }
+
+func lockTestDir(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0000); err != nil {
+		t.Fatal(err)
+	}
+	// Restore permissions so t.TempDir cleanup can remove the tree.
+	t.Cleanup(func() { _ = os.Chmod(path, 0755) })
+}
+
+func TestSubdirectoryHasFilesRule_UnreadableNestedDirectoryDoesNotHideSiblingFile(t *testing.T) {
+	dir := t.TempDir()
+	// "Locked" sorts before "take.wav", so the walk reaches the unreadable
+	// directory before the visible file.
+	locked := filepath.Join(dir, "Audio", "Locked")
+	writeTestFile(t, filepath.Join(locked, "hidden-by-permissions.wav"))
+	writeTestFile(t, filepath.Join(dir, "Audio", "take.wav"))
+	lockTestDir(t, locked)
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error when a visible file exists beside an unreadable directory, got %v", err)
+	}
+	if !matched {
+		t.Error("expected match when Audio contains a visible file beside an unreadable directory")
+	}
+	if tag != "Green" {
+		t.Errorf("expected tag Green, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_AnyUnreadableFirstOtherHasFile(t *testing.T) {
+	dir := t.TempDir()
+	lockTestDir(t, filepath.Join(dir, "Audio"))
+	writeTestFile(t, filepath.Join(dir, "Mixdown", "mix.wav"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio", "Mixdown"},
+		Match:          "any",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error when another subdirectory qualifies in any mode, got %v", err)
+	}
+	if !matched {
+		t.Error("expected match when another subdirectory contains a visible file")
+	}
+	if tag != "Green" {
+		t.Errorf("expected tag Green, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_AnyUnreadableOtherEmpty(t *testing.T) {
+	dir := t.TempDir()
+	lockTestDir(t, filepath.Join(dir, "Audio"))
+	if err := os.Mkdir(filepath.Join(dir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio", "Mixdown"},
+		Match:          "any",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err == nil {
+		t.Error("expected error when no subdirectory qualifies and one cannot be read")
+	}
+	if matched {
+		t.Error("expected no match when no subdirectory qualifies")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_AllUnreadableFirstOtherEmpty(t *testing.T) {
+	dir := t.TempDir()
+	lockTestDir(t, filepath.Join(dir, "Audio"))
+	if err := os.Mkdir(filepath.Join(dir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio", "Mixdown"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error when another subdirectory definitively fails in all mode, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match when a subdirectory is empty")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_AllUnreadableFirstOtherHasFile(t *testing.T) {
+	dir := t.TempDir()
+	lockTestDir(t, filepath.Join(dir, "Audio"))
+	writeTestFile(t, filepath.Join(dir, "Mixdown", "mix.wav"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio", "Mixdown"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err == nil {
+		t.Error("expected error when a subdirectory cannot be read and no other fails")
+	}
+	if matched {
+		t.Error("expected no match when a subdirectory cannot be read")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_UnreadableSubdirectoryRoot(t *testing.T) {
+	dir := t.TempDir()
+	lockTestDir(t, filepath.Join(dir, "Audio"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err == nil {
+		t.Error("expected error when the subdirectory itself cannot be read")
+	}
+	if matched {
+		t.Error("expected no match when the subdirectory cannot be read")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_SymlinkedSubdirectoryNotFollowed(t *testing.T) {
+	dir := t.TempDir()
+	target := t.TempDir()
+	writeTestFile(t, filepath.Join(target, "take.wav"))
+	if err := os.Symlink(target, filepath.Join(dir, "Audio")); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error for a symlinked subdirectory, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match when Audio is a symlink to a directory")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_DanglingSymlinkSubdirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(dir, "does-not-exist"), filepath.Join(dir, "Audio")); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error for a dangling symlink, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match when Audio is a dangling symlink")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
