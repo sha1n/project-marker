@@ -84,7 +84,7 @@ go-lint:
 .PHONY: golangci-lint
 golangci-lint:
 	@echo "  >  Running golangci-lint..."
-	go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
+	go tool -modfile=tools/go.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
 
 .PHONY: go-format
 go-format:
@@ -122,6 +122,7 @@ go-build-darwin-arm64:
 go-get:
 	@echo "  >  Checking if there is any missing dependencies..."
 	@GOBIN=$(GOBIN) go mod tidy
+	@GOBIN=$(GOBIN) go -C tools mod tidy
 
 .PHONY: go-test
 go-test:
