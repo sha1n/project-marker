@@ -4,6 +4,8 @@ package macostags
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -493,5 +495,84 @@ func TestSetTags_MissingPath(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
 	if err := SetTags(missing, []string{"Blue"}); err == nil {
 		t.Error("expected error for nonexistent path")
+	}
+}
+
+func TestSetTags_MissingPath_ReportsNotExist(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+
+	err := SetTags(missing, []string{"Blue"})
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("expected fs.ErrNotExist, got: %v", err)
+	}
+	wantMsg := fmt.Sprintf("cannot update Finder tags on %q: no such file or directory", missing)
+	if err.Error() != wantMsg {
+		t.Errorf("error message: expected %q, got %q", wantMsg, err.Error())
+	}
+}
+
+func TestTaggerApply_PermissionDenied_ReportsFriendlyError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses permission checks")
+	}
+	dir := newTestDir(t, "project")
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	tagger := &Tagger{}
+	err := tagger.Apply(dir, "Blue")
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("expected fs.ErrPermission, got: %v", err)
+	}
+	wantMsg := fmt.Sprintf("cannot update Finder tags on %q: permission denied", dir)
+	if err.Error() != wantMsg {
+		t.Errorf("error message: expected %q, got %q", wantMsg, err.Error())
+	}
+}
+
+func TestGetTags_ParentPermissionDenied_ReportsFriendlyError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses permission checks")
+	}
+	parent := t.TempDir()
+	child := filepath.Join(parent, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	_, err := GetTags(child)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("expected fs.ErrPermission, got: %v", err)
+	}
+	wantMsg := fmt.Sprintf("cannot read Finder tags on %q: permission denied", child)
+	if err.Error() != wantMsg {
+		t.Errorf("error message: expected %q, got %q", wantMsg, err.Error())
+	}
+}
+
+func TestGetTags_MalformedTagsXattr_ReportsFriendlyError(t *testing.T) {
+	dir := newTestDir(t, "project")
+	if err := unix.Setxattr(dir, xattrKey, []byte("not a plist"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := GetTags(dir)
+	wantMsg := fmt.Sprintf("cannot read Finder tags on %q: the stored tags are malformed", dir)
+	if err == nil || err.Error() != wantMsg {
+		t.Errorf("error message: expected %q, got %v", wantMsg, err)
 	}
 }
