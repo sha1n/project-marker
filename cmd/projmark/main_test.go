@@ -817,3 +817,109 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestSummarize(t *testing.T) {
+	tests := []struct {
+		name         string
+		results      []scanner.Result
+		wantActioned int
+		wantAlready  int
+		wantSkipped  int
+	}{
+		{
+			name:    "empty input",
+			results: nil,
+		},
+		{
+			name: "one path with two tagged results counts once",
+			results: []scanner.Result{
+				{Path: "/a", Action: scanner.ActionTagged},
+				{Path: "/a", Action: scanner.ActionTagged},
+			},
+			wantActioned: 1,
+		},
+		{
+			name: "mixed actioned and already-tagged on same path counts in both buckets",
+			results: []scanner.Result{
+				{Path: "/a", Action: scanner.ActionTagged},
+				{Path: "/a", Action: scanner.ActionAlreadyTagged},
+			},
+			wantActioned: 1,
+			wantAlready:  1,
+		},
+		{
+			name: "two distinct paths each with two would-tag results",
+			results: []scanner.Result{
+				{Path: "/a", Action: scanner.ActionWouldTag},
+				{Path: "/a", Action: scanner.ActionWouldTag},
+				{Path: "/b", Action: scanner.ActionWouldTag},
+				{Path: "/b", Action: scanner.ActionWouldTag},
+			},
+			wantActioned: 2,
+		},
+		{
+			name: "one path with two skipped results counts once",
+			results: []scanner.Result{
+				{Path: "/a", Action: scanner.ActionSkipped},
+				{Path: "/a", Action: scanner.ActionSkipped},
+			},
+			wantSkipped: 1,
+		},
+		{
+			name: "path present in all three buckets counts once in each",
+			results: []scanner.Result{
+				{Path: "/a", Action: scanner.ActionUntagged},
+				{Path: "/a", Action: scanner.ActionAlreadyTagged},
+				{Path: "/a", Action: scanner.ActionSkipped},
+				{Path: "/b", Action: scanner.ActionSkipped},
+			},
+			wantActioned: 1,
+			wantAlready:  1,
+			wantSkipped:  2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actioned, already, skipped := summarize(tt.results)
+			if actioned != tt.wantActioned || already != tt.wantAlready || skipped != tt.wantSkipped {
+				t.Errorf("summarize(%+v) = (%d, %d, %d), want (%d, %d, %d)",
+					tt.results, actioned, already, skipped, tt.wantActioned, tt.wantAlready, tt.wantSkipped)
+			}
+		})
+	}
+}
+
+func TestRun_SummaryCountsDistinctDirectories(t *testing.T) {
+	root := t.TempDir()
+
+	// The default config's Cubase target has two rules (Blue: has_subdirectory
+	// "Mixdown", Green: subdirectory_has_files "Audio") that both match this
+	// single directory, so it must still count as 1 directory, not 2.
+	project := filepath.Join(root, "P1")
+	if err := os.MkdirAll(filepath.Join(project, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "Audio"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "P1.cpr"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "Audio", "take.wav"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{"--dry-run", root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+	if !strings.Contains(stdout, "Complete! Would tag 1 directory.") {
+		t.Errorf("expected 'Complete! Would tag 1 directory.' in stdout, got: %s", stdout)
+	}
+	if strings.Contains(stdout, "2 directories") {
+		t.Errorf("expected summary to count 1 distinct directory, not 2, got: %s", stdout)
+	}
+}
