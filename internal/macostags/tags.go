@@ -42,7 +42,7 @@ static char *projmark_set_tag_names(const char *path, const char **tags, int cou
 			if (error == nil) {
 				return strdup("unknown error");
 			}
-			*outDomain = strdup(error.domain.UTF8String);
+			*outDomain = strdup(error.domain.UTF8String ?: "");
 			*outCode = (long long)error.code;
 
 			NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
@@ -53,7 +53,7 @@ static char *projmark_set_tag_names(const char *path, const char **tags, int cou
 				*outHasPosix = 1;
 				*outPosixCode = (int)error.code;
 			}
-			return strdup(error.localizedDescription.UTF8String);
+			return strdup(error.localizedDescription.UTF8String ?: "");
 		}
 		return NULL;
 	}
@@ -156,6 +156,7 @@ func RemoveTag(path, tag string) error {
 	if !slices.Contains(names, tag) {
 		return nil
 	}
+
 	remaining := slices.DeleteFunc(names, func(name string) bool { return name == tag })
 	if err := SetTags(path, remaining); err != nil {
 		return err
@@ -305,7 +306,7 @@ func isAbsent(err error) bool {
 // cause is the friendly reason behind a tagging failure. It is shared by the getxattr read path
 // and the Foundation write path so both report identical text for the same underlying errno, and
 // so errors.Is matches fs.ErrNotExist, fs.ErrPermission, unix.EROFS, errors.ErrUnsupported, or the
-// errno itself, per the mapping table in the design brief.
+// errno itself.
 type cause struct {
 	reason string
 	errno  unix.Errno // 0 when the failure could not be mapped to a POSIX errno
@@ -323,10 +324,6 @@ func (c *cause) Is(target error) bool {
 		if target == fs.ErrPermission {
 			return true
 		}
-	case unix.EROFS:
-		if target == unix.EROFS {
-			return true
-		}
 	case unix.ENOTSUP:
 		if target == errors.ErrUnsupported {
 			return true
@@ -338,9 +335,9 @@ func (c *cause) Is(target error) bool {
 	return false
 }
 
-// friendlyReason is the single source of truth for the mapping table's <reason> column. It
-// falls back to description (the errno string or NSError localizedDescription) for causes that
-// aren't in the table.
+// friendlyReason is the single source of truth for the friendly <reason> text per errno. It
+// falls back to description (the errno string or NSError localizedDescription) for errnos not
+// covered by an explicit case below.
 func friendlyReason(errno unix.Errno, description string) string {
 	switch errno {
 	case unix.ENOENT, unix.ENOTDIR:
@@ -376,8 +373,6 @@ func errnoFromNSError(domain string, code int64, hasPosix bool, posixErrno int) 
 		return unix.Errno(posixErrno)
 	}
 	switch domain {
-	case "NSPOSIXErrorDomain":
-		return unix.Errno(code)
 	case "NSCocoaErrorDomain":
 		switch code {
 		case 4, 260:
