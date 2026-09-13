@@ -172,21 +172,25 @@ func (t *Tagger) Remove(path, tag string) error {
 	return RemoveTag(path, tag)
 }
 
-// HasTag reports whether the given tag is present on the path. Paths carrying legacy
-// bare-name or duplicate entries report false so that Apply rewrites them with color metadata.
+// HasTag reports whether the given tag is present on the path, regardless of how it is stored.
 func (t *Tagger) HasTag(path, tag string) (bool, error) {
 	entries, err := readEntries(path)
 	if err != nil {
 		return false, err
 	}
-	names := tagNames(entries)
-	return slices.Contains(names, tag) && !needsRepair(entries, names), nil
+	return slices.Contains(tagNames(entries), tag), nil
 }
 
 // NeedsRepair reports whether the path's stored tags must be rewritten for Finder to show
 // their colors: entries stored without color metadata, or duplicated names.
 // A missing or untagged path needs no repair.
-func (t *Tagger) NeedsRepair(path string) (bool, error) { return false, nil }
+func (t *Tagger) NeedsRepair(path string) (bool, error) {
+	entries, err := readEntries(path)
+	if err != nil {
+		return false, err
+	}
+	return needsRepair(entries, tagNames(entries)), nil
+}
 
 // HasTagOrder reports whether the given tags appear on path in the given relative order.
 // Tags that are not present on path are ignored.

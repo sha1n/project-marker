@@ -18,6 +18,7 @@ type Tagger struct{}
 func (t *Tagger) Apply(path, tag string) error          { return ErrUnsupportedPlatform }
 func (t *Tagger) Remove(path, tag string) error         { return ErrUnsupportedPlatform }
 func (t *Tagger) HasTag(path, tag string) (bool, error) { return false, ErrUnsupportedPlatform }
+func (t *Tagger) NeedsRepair(path string) (bool, error) { return false, ErrUnsupportedPlatform }
 func (t *Tagger) HasTagOrder(path string, tags []string) (bool, error) {
 	return false, ErrUnsupportedPlatform
 }
