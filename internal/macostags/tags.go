@@ -156,7 +156,26 @@ func RemoveTag(path, tag string) error {
 	if !slices.Contains(names, tag) {
 		return nil
 	}
-	return SetTags(path, slices.DeleteFunc(names, func(name string) bool { return name == tag }))
+	remaining := slices.DeleteFunc(names, func(name string) bool { return name == tag })
+	if err := SetTags(path, remaining); err != nil {
+		return err
+	}
+	if len(remaining) == 0 {
+		return clearTagsAttribute(path)
+	}
+	return nil
+}
+
+// clearTagsAttribute removes the tags xattr outright once the last tag is gone: the system
+// tagging API leaves an empty-list attribute behind, which would make a never-tagged folder
+// indistinguishable from one projmark previously tagged and then fully untagged.
+func clearTagsAttribute(path string) error {
+	err := unix.Removexattr(path, xattrKey)
+	if err == nil || errors.Is(err, unix.ENOATTR) {
+		return nil
+	}
+	errno, _ := err.(unix.Errno)
+	return fmt.Errorf("cannot update Finder tags on %q: %w", path, causeFromErrno(errno, err))
 }
 
 // Tagger implements the scanner.Tagger interface for macOS.
