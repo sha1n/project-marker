@@ -3,9 +3,14 @@
 package macostags
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"golang.org/x/sys/unix"
+	"howett.net/plist"
 )
 
 func TestSetAndGetTags(t *testing.T) {
@@ -226,5 +231,219 @@ func TestTagger_ApplyAndRemove(t *testing.T) {
 	}
 	if tags != nil {
 		t.Errorf("expected nil tags after remove, got %v", tags)
+	}
+}
+
+const finderInfoKey = "com.apple.FinderInfo"
+
+func rawTagEntries(t *testing.T, path string) []string {
+	t.Helper()
+	size, err := unix.Getxattr(path, xattrKey, nil)
+	if errors.Is(err, unix.ENOATTR) {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("getxattr %s size: %v", xattrKey, err)
+	}
+	buf := make([]byte, size)
+	if _, err := unix.Getxattr(path, xattrKey, buf); err != nil {
+		t.Fatalf("getxattr %s: %v", xattrKey, err)
+	}
+	var entries []string
+	if _, err := plist.Unmarshal(buf, &entries); err != nil {
+		t.Fatalf("unmarshal %s: %v", xattrKey, err)
+	}
+	return entries
+}
+
+func writeRawTagEntries(t *testing.T, path string, entries []string) {
+	t.Helper()
+	data, err := plist.Marshal(entries, plist.BinaryFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Setxattr(path, xattrKey, data, 0); err != nil {
+		t.Fatalf("setxattr %s: %v", xattrKey, err)
+	}
+}
+
+// labelColor returns the Finder label color index stored in FinderInfo
+// (byte 9 of the 32-byte record holds colorIndex << 1), or 0 when absent.
+func labelColor(t *testing.T, path string) int {
+	t.Helper()
+	buf := make([]byte, 32)
+	n, err := unix.Getxattr(path, finderInfoKey, buf)
+	if errors.Is(err, unix.ENOATTR) {
+		return 0
+	}
+	if err != nil {
+		t.Fatalf("getxattr %s: %v", finderInfoKey, err)
+	}
+	if n < 10 {
+		t.Fatalf("%s too short: %d bytes", finderInfoKey, n)
+	}
+	return int(buf[9]>>1) & 7
+}
+
+func newTestDir(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func assertRawTagEntries(t *testing.T, path string, want []string) {
+	t.Helper()
+	if got := rawTagEntries(t, path); !slices.Equal(got, want) {
+		t.Errorf("raw tag entries: expected %q, got %q", want, got)
+	}
+}
+
+func assertLabelColor(t *testing.T, path string, want int) {
+	t.Helper()
+	if got := labelColor(t, path); got != want {
+		t.Errorf("label color: expected %d, got %d", want, got)
+	}
+}
+
+func assertTags(t *testing.T, path string, want []string) {
+	t.Helper()
+	got, err := GetTags(path)
+	if err != nil {
+		t.Fatalf("GetTags failed: %v", err)
+	}
+	if !slices.Equal(got, want) || (want == nil && got != nil) {
+		t.Errorf("tags: expected %q, got %q", want, got)
+	}
+}
+
+func TestSetTags_Directory_StoresColorMetadataAndLabel(t *testing.T) {
+	dir := newTestDir(t, "project")
+
+	if err := SetTags(dir, []string{"Blue", "Green"}); err != nil {
+		t.Fatalf("SetTags failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Blue\n4", "Green\n2"})
+	assertLabelColor(t, dir, 2)
+	assertTags(t, dir, []string{"Blue", "Green"})
+}
+
+func TestTagger_Apply_Directory_StoresColorMetadataAndLabel(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Blue\n4"})
+	assertLabelColor(t, dir, 4)
+}
+
+func TestTagger_Apply_RepairsLegacyBareNameTags(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	// Older projmark versions wrote bare names, which Finder does not color.
+	writeRawTagEntries(t, dir, []string{"Blue"})
+
+	has, err := tagger.HasTag(dir, "Blue")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if has {
+		t.Error("expected HasTag=false for legacy bare-name tag so the scanner re-applies it")
+	}
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Blue\n4"})
+	assertLabelColor(t, dir, 4)
+	assertTags(t, dir, []string{"Blue"})
+
+	has, err = tagger.HasTag(dir, "Blue")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true after repair")
+	}
+}
+
+func TestFinderWrittenTags(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+	writeRawTagEntries(t, dir, []string{"Orange\n7"})
+
+	assertTags(t, dir, []string{"Orange"})
+
+	has, err := tagger.HasTag(dir, "Orange")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true for Finder-written tag")
+	}
+
+	if err := AddTag(dir, "Orange"); err != nil {
+		t.Fatalf("AddTag failed: %v", err)
+	}
+	if got := rawTagEntries(t, dir); len(got) != 1 {
+		t.Errorf("expected exactly one raw entry after AddTag, got %q", got)
+	}
+	assertTags(t, dir, []string{"Orange"})
+
+	if err := RemoveTag(dir, "Orange"); err != nil {
+		t.Fatalf("RemoveTag failed: %v", err)
+	}
+	assertTags(t, dir, nil)
+	assertLabelColor(t, dir, 0)
+}
+
+func TestTagger_Remove_LastTag_ClearsLabelColor(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+	assertLabelColor(t, dir, 4)
+
+	if err := tagger.Remove(dir, "Blue"); err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+	assertTags(t, dir, nil)
+	assertLabelColor(t, dir, 0)
+}
+
+func TestSetTags_CustomTagName(t *testing.T) {
+	dir := newTestDir(t, "project")
+
+	if err := SetTags(dir, []string{"ProjmarkCustomTag"}); err != nil {
+		t.Fatalf("SetTags failed: %v", err)
+	}
+	assertTags(t, dir, []string{"ProjmarkCustomTag"})
+}
+
+func TestTagger_Apply_PathWithSpacesAndNonASCII(t *testing.T) {
+	dir := newTestDir(t, "שיחה בשניים (דואט)")
+	tagger := &Tagger{}
+
+	if err := tagger.Apply(dir, "Green"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+	assertTags(t, dir, []string{"Green"})
+	assertLabelColor(t, dir, 2)
+}
+
+func TestSetTags_MissingPath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if err := SetTags(missing, []string{"Blue"}); err == nil {
+		t.Error("expected error for nonexistent path")
 	}
 }
