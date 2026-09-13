@@ -94,7 +94,7 @@ func GetTags(path string) ([]string, error) {
 }
 
 // AddTag adds a tag to existing tags without removing others.
-// Tags stored in the legacy bare-name format are rewritten so Finder colors them.
+// Tags stored in the legacy bare-name format or duplicated are rewritten so Finder colors them.
 func AddTag(path, tag string) error {
 	entries, err := readEntries(path)
 	if err != nil {
@@ -103,7 +103,7 @@ func AddTag(path, tag string) error {
 
 	names := tagNames(entries)
 	if slices.Contains(names, tag) {
-		if !hasLegacyEntry(entries) {
+		if !needsRepair(entries, names) {
 			return nil
 		}
 		return SetTags(path, names)
@@ -137,13 +137,14 @@ func (t *Tagger) Remove(path, tag string) error {
 }
 
 // HasTag reports whether the given tag is present on the path. Paths carrying legacy
-// bare-name entries report false so that Apply rewrites them with color metadata.
+// bare-name or duplicate entries report false so that Apply rewrites them with color metadata.
 func (t *Tagger) HasTag(path, tag string) (bool, error) {
 	entries, err := readEntries(path)
 	if err != nil {
 		return false, err
 	}
-	return slices.Contains(tagNames(entries), tag) && !hasLegacyEntry(entries), nil
+	names := tagNames(entries)
+	return slices.Contains(names, tag) && !needsRepair(entries, names), nil
 }
 
 // readEntries is read directly from the xattr rather than through Foundation: it keeps
@@ -177,15 +178,24 @@ func isAbsent(err error) bool {
 	return errors.Is(err, unix.ENOATTR) || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR)
 }
 
+// tagNames de-duplicates because earlier versions could store a bare duplicate of a
+// Finder-written tag, and the system tagging API persists duplicates as given.
 func tagNames(entries []string) []string {
 	if len(entries) == 0 {
 		return nil
 	}
-	names := make([]string, len(entries))
-	for i, entry := range entries {
-		names[i], _, _ = strings.Cut(entry, entrySeparator)
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name, _, _ := strings.Cut(entry, entrySeparator)
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
 	}
 	return names
+}
+
+func needsRepair(entries, names []string) bool {
+	return len(names) != len(entries) || hasLegacyEntry(entries)
 }
 
 func hasLegacyEntry(entries []string) bool {
