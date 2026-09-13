@@ -9,6 +9,11 @@ targets:
         value:
           - "Mixdown"
         apply_tag: "Blue"
+      - type: "subdirectory_has_files"
+        match: "any"
+        value:
+          - "Audio"
+        apply_tag: "Green"
 
   - name: "LUNA"
     indicators:
