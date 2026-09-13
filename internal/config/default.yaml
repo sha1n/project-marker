@@ -3,17 +3,19 @@ targets:
     indicators:
       - type: "file_extension"
         value: ".cpr"
+    # The last matching rule's tag is placed after the others, so it sets the folder's Finder
+    # color unless a colored tag was added afterward by hand.
     rules:
-      - type: "has_subdirectory"
-        match: "any"
-        value:
-          - "Mixdown"
-        apply_tag: "Blue"
       - type: "subdirectory_has_files"
         match: "any"
         value:
           - "Audio"
         apply_tag: "Green"
+      - type: "has_subdirectory"
+        match: "any"
+        value:
+          - "Mixdown"
+        apply_tag: "Blue"
 
   - name: "LUNA"
     indicators:

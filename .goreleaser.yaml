@@ -7,7 +7,8 @@ before:
 builds:
   - id: default
     env:
-      - CGO_ENABLED=0
+      # Finder tags are written through Foundation, so darwin builds require cgo and a macOS host.
+      - CGO_ENABLED=1
     goos:
       - darwin
     goarch:
@@ -42,8 +43,8 @@ changelog:
   sort: asc
   filters:
     exclude:
-      - '^docs:'
-      - '^test:'
+      - '^docs(\(.+\))?:'
+      - '^test(\(.+\))?:'
 
 homebrew_casks:
   - name: projmark

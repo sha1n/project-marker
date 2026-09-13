@@ -169,6 +169,34 @@ func TestLoadDefaultConfig_CubaseAudioFilesRule(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultConfig_CubaseTagOrderGreenThenBlue(t *testing.T) {
+	registry := engine.NewRegistry()
+	targets, err := Load(registry)
+	if err != nil {
+		t.Fatalf("failed to load default config: %v", err)
+	}
+	if len(targets) == 0 || targets[0].Name != "Cubase" {
+		t.Fatalf("expected first target to be Cubase, got %+v", targets)
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "Audio"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Audio", "take.wav"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	tags := evaluateRuleTags(t, targets[0], dir)
+	want := []string{"Green", "Blue"}
+	if len(tags) != len(want) || tags[0] != want[0] || tags[1] != want[1] {
+		t.Errorf("expected Cubase rule tags in order %v, got %v", want, tags)
+	}
+}
+
 func evaluateRuleTags(t *testing.T, target ResolvedTarget, dir string) []string {
 	t.Helper()
 	var tags []string

@@ -3,9 +3,16 @@
 package macostags
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"golang.org/x/sys/unix"
+	"howett.net/plist"
 )
 
 func TestSetAndGetTags(t *testing.T) {
@@ -226,5 +233,599 @@ func TestTagger_ApplyAndRemove(t *testing.T) {
 	}
 	if tags != nil {
 		t.Errorf("expected nil tags after remove, got %v", tags)
+	}
+}
+
+const finderInfoKey = "com.apple.FinderInfo"
+
+func rawTagEntries(t *testing.T, path string) []string {
+	t.Helper()
+	size, err := unix.Getxattr(path, xattrKey, nil)
+	if errors.Is(err, unix.ENOATTR) {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("getxattr %s size: %v", xattrKey, err)
+	}
+	buf := make([]byte, size)
+	if _, err := unix.Getxattr(path, xattrKey, buf); err != nil {
+		t.Fatalf("getxattr %s: %v", xattrKey, err)
+	}
+	var entries []string
+	if _, err := plist.Unmarshal(buf, &entries); err != nil {
+		t.Fatalf("unmarshal %s: %v", xattrKey, err)
+	}
+	return entries
+}
+
+func writeRawTagEntries(t *testing.T, path string, entries []string) {
+	t.Helper()
+	data, err := plist.Marshal(entries, plist.BinaryFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Setxattr(path, xattrKey, data, 0); err != nil {
+		t.Fatalf("setxattr %s: %v", xattrKey, err)
+	}
+}
+
+// labelColor returns the Finder label color index stored in FinderInfo
+// (byte 9 of the 32-byte record holds colorIndex << 1), or 0 when absent.
+func labelColor(t *testing.T, path string) int {
+	t.Helper()
+	buf := make([]byte, 32)
+	n, err := unix.Getxattr(path, finderInfoKey, buf)
+	if errors.Is(err, unix.ENOATTR) {
+		return 0
+	}
+	if err != nil {
+		t.Fatalf("getxattr %s: %v", finderInfoKey, err)
+	}
+	if n < 10 {
+		t.Fatalf("%s too short: %d bytes", finderInfoKey, n)
+	}
+	return int(buf[9]>>1) & 7
+}
+
+func newTestDir(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func assertRawTagEntries(t *testing.T, path string, want []string) {
+	t.Helper()
+	if got := rawTagEntries(t, path); !slices.Equal(got, want) {
+		t.Errorf("raw tag entries: expected %q, got %q", want, got)
+	}
+}
+
+// assertXattrAbsent fails unless key is entirely missing from path (ENOATTR), as opposed to
+// present with an empty value: rawTagEntries treats both as "no entries", which is too weak
+// to pin down that the attribute itself was removed rather than left behind empty.
+func assertXattrAbsent(t *testing.T, path, key string) {
+	t.Helper()
+	_, err := unix.Getxattr(path, key, nil)
+	if !errors.Is(err, unix.ENOATTR) {
+		t.Errorf("expected xattr %q to be absent on %q, got err=%v", key, path, err)
+	}
+}
+
+func assertLabelColor(t *testing.T, path string, want int) {
+	t.Helper()
+	if got := labelColor(t, path); got != want {
+		t.Errorf("label color: expected %d, got %d", want, got)
+	}
+}
+
+func assertTags(t *testing.T, path string, want []string) {
+	t.Helper()
+	got, err := GetTags(path)
+	if err != nil {
+		t.Fatalf("GetTags failed: %v", err)
+	}
+	if !slices.Equal(got, want) || (want == nil && got != nil) {
+		t.Errorf("tags: expected %q, got %q", want, got)
+	}
+}
+
+func TestSetTags_Directory_StoresColorMetadataAndLabel(t *testing.T) {
+	dir := newTestDir(t, "project")
+
+	if err := SetTags(dir, []string{"Blue", "Green"}); err != nil {
+		t.Fatalf("SetTags failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Blue\n4", "Green\n2"})
+	assertLabelColor(t, dir, 2)
+	assertTags(t, dir, []string{"Blue", "Green"})
+}
+
+func TestTagger_Apply_Directory_StoresColorMetadataAndLabel(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Blue\n4"})
+	assertLabelColor(t, dir, 4)
+}
+
+func TestTagger_Apply_RepairsLegacyBareNameTags(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	// Older projmark versions wrote bare names, which Finder does not color.
+	writeRawTagEntries(t, dir, []string{"Blue"})
+
+	has, err := tagger.HasTag(dir, "Blue")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true for legacy bare-name tag: the tag is present regardless of storage format")
+	}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if !needsRepair {
+		t.Error("expected NeedsRepair=true for legacy bare-name tag so the scanner re-applies it")
+	}
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Blue\n4"})
+	assertLabelColor(t, dir, 4)
+	assertTags(t, dir, []string{"Blue"})
+
+	has, err = tagger.HasTag(dir, "Blue")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true after repair")
+	}
+
+	needsRepair, err = tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false after repair")
+	}
+}
+
+func TestTagger_Apply_RepairsDuplicateLegacyEntries(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	// Older projmark versions appended a bare name next to Finder's colored entry.
+	writeRawTagEntries(t, dir, []string{"Orange\n7", "Blue", "Orange"})
+
+	has, err := tagger.HasTag(dir, "Orange")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true when a colored entry has a duplicate legacy bare-name entry")
+	}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if !needsRepair {
+		t.Error("expected NeedsRepair=true for duplicate legacy entries")
+	}
+
+	if err := tagger.Apply(dir, "Orange"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Orange\n7", "Blue\n4"})
+	assertLabelColor(t, dir, 4)
+	assertTags(t, dir, []string{"Orange", "Blue"})
+
+	needsRepair, err = tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false after repair")
+	}
+}
+
+func TestTagger_Apply_RepairsDuplicateEntriesWithoutLegacy(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	writeRawTagEntries(t, dir, []string{"Orange\n7", "Orange\n7"})
+
+	has, err := tagger.HasTag(dir, "Orange")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true for duplicate colored entries: the tag is present regardless of storage format")
+	}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if !needsRepair {
+		t.Error("expected NeedsRepair=true for duplicate colored entries")
+	}
+
+	if err := tagger.Apply(dir, "Orange"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Orange\n7"})
+	assertLabelColor(t, dir, 7)
+
+	has, err = tagger.HasTag(dir, "Orange")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true after repair")
+	}
+
+	needsRepair, err = tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false after repair")
+	}
+
+	assertTags(t, dir, []string{"Orange"})
+}
+
+func TestFinderWrittenTags(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+	writeRawTagEntries(t, dir, []string{"Orange\n7"})
+
+	assertTags(t, dir, []string{"Orange"})
+
+	has, err := tagger.HasTag(dir, "Orange")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true for Finder-written tag")
+	}
+
+	if err := AddTag(dir, "Orange"); err != nil {
+		t.Fatalf("AddTag failed: %v", err)
+	}
+	if got := rawTagEntries(t, dir); len(got) != 1 {
+		t.Errorf("expected exactly one raw entry after AddTag, got %q", got)
+	}
+	assertTags(t, dir, []string{"Orange"})
+
+	if err := RemoveTag(dir, "Orange"); err != nil {
+		t.Fatalf("RemoveTag failed: %v", err)
+	}
+	assertTags(t, dir, nil)
+	assertLabelColor(t, dir, 0)
+}
+
+func TestTagger_Remove_LastTag_ClearsLabelColor(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+	assertLabelColor(t, dir, 4)
+
+	if err := tagger.Remove(dir, "Blue"); err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+	assertTags(t, dir, nil)
+	assertLabelColor(t, dir, 0)
+	// Removing the last tag must drop the attribute entirely, not just store an empty list,
+	// so folders previously tagged by projmark are indistinguishable from never-tagged ones.
+	// assertRawTagEntries alone can't tell an absent attribute from one holding an empty list
+	// (both decode to zero entries), so this also checks the xattr is gone (ENOATTR).
+	assertRawTagEntries(t, dir, nil)
+	assertXattrAbsent(t, dir, xattrKey)
+}
+
+func TestSetTags_CustomTagName(t *testing.T) {
+	dir := newTestDir(t, "project")
+
+	if err := SetTags(dir, []string{"ProjmarkCustomTag"}); err != nil {
+		t.Fatalf("SetTags failed: %v", err)
+	}
+	assertTags(t, dir, []string{"ProjmarkCustomTag"})
+}
+
+func TestTagger_Apply_PathWithSpacesAndNonASCII(t *testing.T) {
+	dir := newTestDir(t, "שיחה בשניים (דואט)")
+	tagger := &Tagger{}
+
+	if err := tagger.Apply(dir, "Green"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+	assertTags(t, dir, []string{"Green"})
+	assertLabelColor(t, dir, 2)
+}
+
+func TestSetTags_MissingPath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if err := SetTags(missing, []string{"Blue"}); err == nil {
+		t.Error("expected error for nonexistent path")
+	}
+}
+
+func TestSetTags_MissingPath_ReportsNotExist(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+
+	err := SetTags(missing, []string{"Blue"})
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("expected fs.ErrNotExist, got: %v", err)
+	}
+	wantMsg := fmt.Sprintf("cannot update Finder tags on %q: no such file or directory", missing)
+	if err.Error() != wantMsg {
+		t.Errorf("error message: expected %q, got %q", wantMsg, err.Error())
+	}
+}
+
+func TestTaggerApply_PermissionDenied_ReportsFriendlyError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses permission checks")
+	}
+	dir := newTestDir(t, "project")
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	tagger := &Tagger{}
+	err := tagger.Apply(dir, "Blue")
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("expected fs.ErrPermission, got: %v", err)
+	}
+	wantMsg := fmt.Sprintf("cannot update Finder tags on %q: permission denied", dir)
+	if err.Error() != wantMsg {
+		t.Errorf("error message: expected %q, got %q", wantMsg, err.Error())
+	}
+}
+
+func TestGetTags_ParentPermissionDenied_ReportsFriendlyError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses permission checks")
+	}
+	parent := t.TempDir()
+	child := filepath.Join(parent, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(parent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	_, err := GetTags(child)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("expected fs.ErrPermission, got: %v", err)
+	}
+	wantMsg := fmt.Sprintf("cannot read Finder tags on %q: permission denied", child)
+	if err.Error() != wantMsg {
+		t.Errorf("error message: expected %q, got %q", wantMsg, err.Error())
+	}
+}
+
+func TestGetTags_MalformedTagsXattr_ReportsFriendlyError(t *testing.T) {
+	dir := newTestDir(t, "project")
+	if err := unix.Setxattr(dir, xattrKey, []byte("not a plist"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := GetTags(dir)
+	wantMsg := fmt.Sprintf("cannot read Finder tags on %q: the stored tags are malformed", dir)
+	if err == nil || err.Error() != wantMsg {
+		t.Errorf("error message: expected %q, got %v", wantMsg, err)
+	}
+}
+
+func TestTagger_HasTagOrder(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
+	tagger := &Tagger{}
+
+	has, err := tagger.HasTagOrder(dir, []string{"Green", "Blue"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTagOrder=true when tags already appear in the given order")
+	}
+
+	has, err = tagger.HasTagOrder(dir, []string{"Blue", "Green"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if has {
+		t.Error("expected HasTagOrder=false when tags appear in the reverse order")
+	}
+
+	has, err = tagger.HasTagOrder(dir, []string{"Green", "Missing", "Blue"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTagOrder=true when an absent tag is ignored")
+	}
+}
+
+func TestTagger_HasTagOrder_UntaggedPath(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	has, err := tagger.HasTagOrder(dir, []string{"Green", "Blue"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTagOrder=true for an untagged path since no tag is out of order")
+	}
+}
+
+func TestTagger_OrderTags_RearrangesAroundOtherTags(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Blue\n4", "Red\n6", "Green\n2"})
+	tagger := &Tagger{}
+
+	if err := tagger.OrderTags(dir, []string{"Green", "Blue"}); err != nil {
+		t.Fatalf("OrderTags failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Green\n2", "Red\n6", "Blue\n4"})
+	assertLabelColor(t, dir, 4)
+}
+
+func TestTagger_OrderTags_AlreadyOrdered_PerformsNoWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses permission checks")
+	}
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
+
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	tagger := &Tagger{}
+	if err := tagger.OrderTags(dir, []string{"Green", "Blue"}); err != nil {
+		t.Errorf("expected no write (and no error) when order already holds, got: %v", err)
+	}
+}
+
+func TestTagger_OrderTags_IgnoresMissingTag(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Blue\n4", "Green\n2"})
+	tagger := &Tagger{}
+
+	if err := tagger.OrderTags(dir, []string{"Green", "Missing", "Blue"}); err != nil {
+		t.Fatalf("OrderTags failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
+}
+
+func TestTagger_OrderTags_DuplicateTagNamesTreatedAsFirstOccurrence(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Blue\n4", "Green\n2"})
+	tagger := &Tagger{}
+
+	if err := tagger.OrderTags(dir, []string{"Green", "Green", "Blue"}); err != nil {
+		t.Fatalf("OrderTags failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
+	assertLabelColor(t, dir, 4)
+
+	has, err := tagger.HasTagOrder(dir, []string{"Green", "Green", "Blue"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTagOrder=true when a duplicate tag name is treated as its first occurrence")
+	}
+}
+
+func TestTagger_NeedsRepair_CanonicalEntries(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Blue\n4"})
+	tagger := &Tagger{}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false for canonical, non-duplicate entries")
+	}
+}
+
+func TestTagger_NeedsRepair_UntaggedPath(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false for an untagged path")
+	}
+}
+
+func TestTagger_NeedsRepair_MissingPath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	tagger := &Tagger{}
+
+	needsRepair, err := tagger.NeedsRepair(missing)
+	if err != nil {
+		t.Fatalf("expected nil error for missing path, got: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false for a missing path")
+	}
+}
+
+// TestTagger_Apply_Idempotent_NoWriteWhenAlreadyCanonical guards against a regression where
+// Apply would rewrite tags (and thus require write permission) even when the tag is already
+// present in canonical form: chmod'ing the directory read-only after the first Apply proves the
+// second call performs no write.
+func TestTagger_Apply_Idempotent_NoWriteWhenAlreadyCanonical(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses permission checks")
+	}
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Fatalf("first Apply failed: %v", err)
+	}
+
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Errorf("expected no write (and no error) when the tag is already present and canonical, got: %v", err)
 	}
 }

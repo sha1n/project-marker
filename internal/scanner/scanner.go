@@ -25,11 +25,25 @@ type Tagger interface {
 	Remove(path, tag string) error
 }
 
-// TagChecker is an optional interface that a Tagger may implement to check
-// whether a tag is already present on a path. This enables accurate dry-run
-// reporting (e.g. "already_tagged" vs "would_tag").
+// TagChecker is an optional interface that a Tagger may implement to check whether a tag is
+// present on a path, regardless of how it is stored. This enables accurate dry-run reporting
+// (e.g. "already_tagged" vs "would_tag").
 type TagChecker interface {
 	HasTag(path, tag string) (bool, error)
+}
+
+// TagRepairChecker is an optional interface a Tagger may implement to report that a path's
+// stored tags must be rewritten even though the tag is already present.
+type TagRepairChecker interface {
+	NeedsRepair(path string) (bool, error)
+}
+
+// TagOrderer is an optional interface a Tagger may implement so that, when several rules
+// tag the same directory, the tag of the last matching rule is placed after the others and
+// therefore determines the directory's Finder color.
+type TagOrderer interface {
+	HasTagOrder(path string, tags []string) (bool, error)
+	OrderTags(path string, tags []string) error
 }
 
 // EventKind classifies what happened at a directory during scanning.
@@ -197,7 +211,7 @@ func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []
 						result.Action = ActionSkipped
 					}
 				} else {
-					if hasTag {
+					if hasTag && !s.tagNeedsRepair(dirPath, "failed to check tag repair (dry run)") {
 						s.Logger.Debug("already tagged (dry run)", "tag", tag, "path", dirPath, "target", target.Name)
 						result.Action = ActionAlreadyTagged
 					} else {
@@ -230,7 +244,7 @@ func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []
 				already, checkErr := checker.HasTag(dirPath, tag)
 				if checkErr != nil {
 					s.Logger.Warn("HasTag check failed, falling through to Apply", "tag", tag, "path", dirPath, "error", checkErr)
-				} else if already {
+				} else if already && !s.tagNeedsRepair(dirPath, "repair check failed, falling through to Apply") {
 					result.Action = ActionAlreadyTagged
 					s.emit(ScanEvent{Kind: EventMatch, Path: dirPath, TargetName: target.Name, Tag: tag, Action: result.Action})
 					results = append(results, result)
@@ -255,5 +269,68 @@ func (s *Scanner) evaluateRules(dirPath string, target config.ResolvedTarget) []
 		s.emit(ScanEvent{Kind: EventSkip, Path: dirPath, TargetName: target.Name})
 	}
 
+	if !s.DryRun && !s.RemoveMode {
+		s.enforceTagOrder(dirPath, results)
+	}
+
 	return results
+}
+
+// tagNeedsRepair reports whether the Tagger, for the add paths only, says a tag already present
+// at dirPath must still be rewritten. It is only meaningful once HasTag has reported the tag
+// present, so callers must short-circuit on that first. A checker error is treated the same as
+// "needs repair" (after logging errMsg) so the caller falls through to Apply/would_tag, matching
+// how a TagChecker error elsewhere in this function falls through rather than blocking the action.
+func (s *Scanner) tagNeedsRepair(dirPath, errMsg string) bool {
+	repairChecker, ok := s.Tagger.(TagRepairChecker)
+	if !ok {
+		return false
+	}
+	needsRepair, err := repairChecker.NeedsRepair(dirPath)
+	if err != nil {
+		s.Logger.Warn(errMsg, "path", dirPath, "error", err)
+		return true
+	}
+	return needsRepair
+}
+
+// enforceTagOrder places the tag of the last matching rule after the others, so it
+// determines the directory's Finder color, when the Tagger supports TagOrderer.
+func (s *Scanner) enforceTagOrder(dirPath string, results []Result) {
+	orderer, ok := s.Tagger.(TagOrderer)
+	if !ok {
+		return
+	}
+
+	var tags []string
+	seen := make(map[string]bool)
+	for _, r := range results {
+		if r.Action != ActionTagged && r.Action != ActionAlreadyTagged {
+			continue
+		}
+		if seen[r.Tag] {
+			continue
+		}
+		seen[r.Tag] = true
+		tags = append(tags, r.Tag)
+	}
+
+	if len(tags) < 2 {
+		return
+	}
+
+	ordered, err := orderer.HasTagOrder(dirPath, tags)
+	if err != nil {
+		s.Logger.Warn("failed to check tag order", "path", dirPath, "error", err)
+		return
+	}
+	if ordered {
+		return
+	}
+
+	if err := orderer.OrderTags(dirPath, tags); err != nil {
+		s.Logger.Warn("failed to order tags", "path", dirPath, "error", err)
+		return
+	}
+	s.Logger.Debug("tags reordered", "path", dirPath, "tags", tags)
 }
