@@ -303,6 +303,17 @@ func assertRawTagEntries(t *testing.T, path string, want []string) {
 	}
 }
 
+// assertXattrAbsent fails unless key is entirely missing from path (ENOATTR), as opposed to
+// present with an empty value: rawTagEntries treats both as "no entries", which is too weak
+// to pin down that the attribute itself was removed rather than left behind empty.
+func assertXattrAbsent(t *testing.T, path, key string) {
+	t.Helper()
+	_, err := unix.Getxattr(path, key, nil)
+	if !errors.Is(err, unix.ENOATTR) {
+		t.Errorf("expected xattr %q to be absent on %q, got err=%v", key, path, err)
+	}
+}
+
 func assertLabelColor(t *testing.T, path string, want int) {
 	t.Helper()
 	if got := labelColor(t, path); got != want {
@@ -356,8 +367,16 @@ func TestTagger_Apply_RepairsLegacyBareNameTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HasTag failed: %v", err)
 	}
-	if has {
-		t.Error("expected HasTag=false for legacy bare-name tag so the scanner re-applies it")
+	if !has {
+		t.Error("expected HasTag=true for legacy bare-name tag: the tag is present regardless of storage format")
+	}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if !needsRepair {
+		t.Error("expected NeedsRepair=true for legacy bare-name tag so the scanner re-applies it")
 	}
 
 	if err := tagger.Apply(dir, "Blue"); err != nil {
@@ -375,6 +394,14 @@ func TestTagger_Apply_RepairsLegacyBareNameTags(t *testing.T) {
 	if !has {
 		t.Error("expected HasTag=true after repair")
 	}
+
+	needsRepair, err = tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false after repair")
+	}
 }
 
 func TestTagger_Apply_RepairsDuplicateLegacyEntries(t *testing.T) {
@@ -384,6 +411,22 @@ func TestTagger_Apply_RepairsDuplicateLegacyEntries(t *testing.T) {
 	// Older projmark versions appended a bare name next to Finder's colored entry.
 	writeRawTagEntries(t, dir, []string{"Orange\n7", "Blue", "Orange"})
 
+	has, err := tagger.HasTag(dir, "Orange")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true when a colored entry has a duplicate legacy bare-name entry")
+	}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if !needsRepair {
+		t.Error("expected NeedsRepair=true for duplicate legacy entries")
+	}
+
 	if err := tagger.Apply(dir, "Orange"); err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}
@@ -391,6 +434,14 @@ func TestTagger_Apply_RepairsDuplicateLegacyEntries(t *testing.T) {
 	assertRawTagEntries(t, dir, []string{"Orange\n7", "Blue\n4"})
 	assertLabelColor(t, dir, 4)
 	assertTags(t, dir, []string{"Orange", "Blue"})
+
+	needsRepair, err = tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false after repair")
+	}
 }
 
 func TestTagger_Apply_RepairsDuplicateEntriesWithoutLegacy(t *testing.T) {
@@ -403,8 +454,16 @@ func TestTagger_Apply_RepairsDuplicateEntriesWithoutLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HasTag failed: %v", err)
 	}
-	if has {
-		t.Error("expected HasTag=false for duplicate colored entries")
+	if !has {
+		t.Error("expected HasTag=true for duplicate colored entries: the tag is present regardless of storage format")
+	}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if !needsRepair {
+		t.Error("expected NeedsRepair=true for duplicate colored entries")
 	}
 
 	if err := tagger.Apply(dir, "Orange"); err != nil {
@@ -420,6 +479,14 @@ func TestTagger_Apply_RepairsDuplicateEntriesWithoutLegacy(t *testing.T) {
 	}
 	if !has {
 		t.Error("expected HasTag=true after repair")
+	}
+
+	needsRepair, err = tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false after repair")
 	}
 
 	assertTags(t, dir, []string{"Orange"})
@@ -469,6 +536,12 @@ func TestTagger_Remove_LastTag_ClearsLabelColor(t *testing.T) {
 	}
 	assertTags(t, dir, nil)
 	assertLabelColor(t, dir, 0)
+	// Removing the last tag must drop the attribute entirely, not just store an empty list,
+	// so folders previously tagged by projmark are indistinguishable from never-tagged ones.
+	// assertRawTagEntries alone can't tell an absent attribute from one holding an empty list
+	// (both decode to zero entries), so this also checks the xattr is gone (ENOATTR).
+	assertRawTagEntries(t, dir, nil)
+	assertXattrAbsent(t, dir, xattrKey)
 }
 
 func TestSetTags_CustomTagName(t *testing.T) {
@@ -685,5 +758,74 @@ func TestTagger_OrderTags_DuplicateTagNamesTreatedAsFirstOccurrence(t *testing.T
 	}
 	if !has {
 		t.Error("expected HasTagOrder=true when a duplicate tag name is treated as its first occurrence")
+	}
+}
+
+func TestTagger_NeedsRepair_CanonicalEntries(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Blue\n4"})
+	tagger := &Tagger{}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false for canonical, non-duplicate entries")
+	}
+}
+
+func TestTagger_NeedsRepair_UntaggedPath(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	needsRepair, err := tagger.NeedsRepair(dir)
+	if err != nil {
+		t.Fatalf("NeedsRepair failed: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false for an untagged path")
+	}
+}
+
+func TestTagger_NeedsRepair_MissingPath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	tagger := &Tagger{}
+
+	needsRepair, err := tagger.NeedsRepair(missing)
+	if err != nil {
+		t.Fatalf("expected nil error for missing path, got: %v", err)
+	}
+	if needsRepair {
+		t.Error("expected NeedsRepair=false for a missing path")
+	}
+}
+
+// TestTagger_Apply_Idempotent_NoWriteWhenAlreadyCanonical guards against a regression where
+// Apply would rewrite tags (and thus require write permission) even when the tag is already
+// present in canonical form: chmod'ing the directory read-only after the first Apply proves the
+// second call performs no write.
+func TestTagger_Apply_Idempotent_NoWriteWhenAlreadyCanonical(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses permission checks")
+	}
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Fatalf("first Apply failed: %v", err)
+	}
+
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if err := tagger.Apply(dir, "Blue"); err != nil {
+		t.Errorf("expected no write (and no error) when the tag is already present and canonical, got: %v", err)
 	}
 }

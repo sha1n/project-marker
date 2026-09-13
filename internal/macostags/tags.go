@@ -183,6 +183,11 @@ func (t *Tagger) HasTag(path, tag string) (bool, error) {
 	return slices.Contains(names, tag) && !needsRepair(entries, names), nil
 }
 
+// NeedsRepair reports whether the path's stored tags must be rewritten for Finder to show
+// their colors: entries stored without color metadata, or duplicated names.
+// A missing or untagged path needs no repair.
+func (t *Tagger) NeedsRepair(path string) (bool, error) { return false, nil }
+
 // HasTagOrder reports whether the given tags appear on path in the given relative order.
 // Tags that are not present on path are ignored.
 func (t *Tagger) HasTagOrder(path string, tags []string) (bool, error) {

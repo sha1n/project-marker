@@ -69,6 +69,30 @@ func (m *failingTagCheckerTagger) HasTag(path, tag string) (bool, error) {
 	return false, m.hasTagErr
 }
 
+// mockRepairCheckerTagger implements Tagger, TagChecker and TagRepairChecker (NeedsRepair).
+// It embeds mockTagCheckerTagger for Apply/Remove/HasTag/setTag.
+type mockRepairCheckerTagger struct {
+	mockTagCheckerTagger
+	needsRepair      map[string]bool // path -> needs repair
+	needsRepairErr   error
+	needsRepairCalls int
+}
+
+func newMockRepairCheckerTagger() *mockRepairCheckerTagger {
+	return &mockRepairCheckerTagger{
+		mockTagCheckerTagger: *newMockTagCheckerTagger(),
+		needsRepair:          make(map[string]bool),
+	}
+}
+
+func (m *mockRepairCheckerTagger) NeedsRepair(path string) (bool, error) {
+	m.needsRepairCalls++
+	if m.needsRepairErr != nil {
+		return false, m.needsRepairErr
+	}
+	return m.needsRepair[path], nil
+}
+
 // errorIndicator always returns an error from IsMatch.
 type errorIndicator struct{ err error }
 
@@ -108,11 +132,11 @@ type orderCall struct {
 	tags []string
 }
 
-// mockTagOrderer implements Tagger, TagChecker and (once the scanner supports
-// it) the TagOrderer contract: HasTagOrder/OrderTags. It embeds
-// mockTagCheckerTagger for Apply/Remove/HasTag, and lets a single tag's
-// Apply be forced to fail so tests can produce a directory with only one
-// eligible (successfully applied) tag.
+// mockTagOrderer implements Tagger, TagChecker and the TagOrderer contract:
+// HasTagOrder/OrderTags. It embeds mockTagCheckerTagger for
+// Apply/Remove/HasTag, and lets a single tag's Apply be forced to fail so
+// tests can produce a directory with only one eligible (successfully
+// applied) tag.
 type mockTagOrderer struct {
 	mockTagCheckerTagger
 	failApplyTag string
@@ -339,6 +363,67 @@ func TestEvaluateRules_TagOrder_LogsWarningWhenOrderTagsFails(t *testing.T) {
 
 	if !strings.Contains(logBuf.String(), "failed to order tags") {
 		t.Errorf("expected %q in log output, got:\n%s", "failed to order tags", logBuf.String())
+	}
+}
+
+// setupThreeRuleGreenGreenBlueTarget builds a target with two independently-evaluated rules
+// that both apply Green, plus a third rule applying Blue, so tests can verify that the tag
+// passed to OrderTags is de-duplicated by first occurrence even when the repeat comes from
+// separate rule matches rather than a single caller-supplied slice.
+func setupThreeRuleGreenGreenBlueTarget(t *testing.T) config.ResolvedTarget {
+	t.Helper()
+	registry := engine.NewRegistry()
+
+	green1, err := registry.CreateRule("subdirectory_has_files", []string{"Audio"}, "any", "Green")
+	if err != nil {
+		t.Fatal(err)
+	}
+	green2, err := registry.CreateRule("has_subdirectory", []string{"Extra"}, "any", "Green")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blue, err := registry.CreateRule("has_subdirectory", []string{"Mixdown"}, "any", "Blue")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return config.ResolvedTarget{
+		Name:  "Cubase",
+		Rules: []engine.TagRule{green1, green2, blue},
+	}
+}
+
+func TestEvaluateRules_TagOrder_DedupsRepeatedTagFromMultipleRules(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "Audio"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Audio", "take.wav"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "Extra"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	tagger := newMockTagOrderer()
+	tagger.hasTagOrderResult = false
+
+	s := &Scanner{Tagger: tagger, Logger: slog.New(slog.DiscardHandler)}
+	results := s.evaluateRules(dir, setupThreeRuleGreenGreenBlueTarget(t))
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if len(tagger.orderCalls) != 1 {
+		t.Fatalf("expected 1 OrderTags call, got %d", len(tagger.orderCalls))
+	}
+	wantTags := []string{"Green", "Blue"}
+	call := tagger.orderCalls[0]
+	if len(call.tags) != len(wantTags) || call.tags[0] != wantTags[0] || call.tags[1] != wantTags[1] {
+		t.Errorf("expected OrderTags tags %v (first-occurrence de-dup across rules), got %v", wantTags, call.tags)
 	}
 }
 
@@ -1322,5 +1407,223 @@ func TestScan_DryRunHasTagError(t *testing.T) {
 	// Warning should be logged about the HasTag failure
 	if !strings.Contains(logBuf.String(), "failed to check tag") {
 		t.Errorf("expected warning about failed tag check in logs, got: %s", logBuf.String())
+	}
+}
+
+func TestScan_AddMode_HasTagTrue_NeedsRepairTrue_AppliesAndTags(t *testing.T) {
+	root, projectDir := setupProjectDir(t)
+
+	tagger := newMockRepairCheckerTagger()
+	tagger.setTag(projectDir, "Blue")
+	tagger.needsRepair[projectDir] = true
+
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:  tagger,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionTagged {
+		t.Errorf("expected action %s when the tag needs repair, got %s", ActionTagged, results[0].Action)
+	}
+	if len(tagger.applied) != 1 {
+		t.Errorf("expected 1 apply call when the tag needs repair, got %d", len(tagger.applied))
+	}
+}
+
+func TestScan_AddMode_HasTagTrue_NeedsRepairFalse_AlreadyTagged_ApplyNotCalled(t *testing.T) {
+	root, projectDir := setupProjectDir(t)
+
+	tagger := newMockRepairCheckerTagger()
+	tagger.setTag(projectDir, "Blue")
+	// needsRepair left false for projectDir.
+
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:  tagger,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionAlreadyTagged {
+		t.Errorf("expected action %s, got %s", ActionAlreadyTagged, results[0].Action)
+	}
+	if len(tagger.applied) != 0 {
+		t.Errorf("expected 0 apply calls when the tag does not need repair, got %d", len(tagger.applied))
+	}
+}
+
+func TestScan_DryRun_AddMode_HasTagTrue_NeedsRepairTrue_WouldTag(t *testing.T) {
+	root, projectDir := setupProjectDir(t)
+
+	tagger := newMockRepairCheckerTagger()
+	tagger.setTag(projectDir, "Blue")
+	tagger.needsRepair[projectDir] = true
+
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:  tagger,
+		DryRun:  true,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionWouldTag {
+		t.Errorf("expected action %s when the tag needs repair (dry run), got %s", ActionWouldTag, results[0].Action)
+	}
+	if len(tagger.applied) != 0 {
+		t.Errorf("expected 0 apply calls in dry run, got %d", len(tagger.applied))
+	}
+}
+
+func TestScan_AddMode_NeedsRepairError_FallsThroughToApply(t *testing.T) {
+	root, projectDir := setupProjectDir(t)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	tagger := newMockRepairCheckerTagger()
+	tagger.setTag(projectDir, "Blue")
+	tagger.needsRepairErr = errors.New("repair check boom")
+
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:  tagger,
+		Logger:  logger,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionTagged {
+		t.Errorf("expected action %s (fallthrough after NeedsRepair error), got %s", ActionTagged, results[0].Action)
+	}
+	if len(tagger.applied) != 1 {
+		t.Errorf("expected 1 apply call after NeedsRepair error, got %d", len(tagger.applied))
+	}
+	if !strings.Contains(logBuf.String(), "repair check failed, falling through to Apply") {
+		t.Errorf("expected %q in log output, got:\n%s", "repair check failed, falling through to Apply", logBuf.String())
+	}
+}
+
+func TestScan_DryRun_AddMode_NeedsRepairError_LogsAndWouldTag(t *testing.T) {
+	root, projectDir := setupProjectDir(t)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	tagger := newMockRepairCheckerTagger()
+	tagger.setTag(projectDir, "Blue")
+	tagger.needsRepairErr = errors.New("repair check boom")
+
+	s := &Scanner{
+		Targets: []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:  tagger,
+		DryRun:  true,
+		Logger:  logger,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionWouldTag {
+		t.Errorf("expected action %s despite NeedsRepair error (dry run), got %s", ActionWouldTag, results[0].Action)
+	}
+	if !strings.Contains(logBuf.String(), "failed to check tag repair (dry run)") {
+		t.Errorf("expected %q in log output, got:\n%s", "failed to check tag repair (dry run)", logBuf.String())
+	}
+}
+
+// TestScan_DryRunRemoveMode_HasTagTrue_NeedsRepairTrue_WouldUntag_Unaffected pins that remove
+// mode reports presence only: a Tagger that also implements TagRepairChecker must not change
+// remove-mode's dry-run outcome, since a removal doesn't care whether the stored tag is
+// canonical.
+func TestScan_DryRunRemoveMode_HasTagTrue_NeedsRepairTrue_WouldUntag_Unaffected(t *testing.T) {
+	root, projectDir := setupProjectDir(t)
+
+	tagger := newMockRepairCheckerTagger()
+	tagger.setTag(projectDir, "Blue")
+	tagger.needsRepair[projectDir] = true
+
+	s := &Scanner{
+		Targets:    []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:     tagger,
+		RemoveMode: true,
+		DryRun:     true,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionWouldUntag {
+		t.Errorf("expected action %s regardless of NeedsRepair in remove mode, got %s", ActionWouldUntag, results[0].Action)
+	}
+}
+
+// TestScan_RemoveMode_HasTagTrue_NeedsRepairTrue_Untagged_Unaffected is the real (non-dry-run)
+// counterpart: remove mode never consults TagRepairChecker.
+func TestScan_RemoveMode_HasTagTrue_NeedsRepairTrue_Untagged_Unaffected(t *testing.T) {
+	root, projectDir := setupProjectDir(t)
+
+	tagger := newMockRepairCheckerTagger()
+	tagger.setTag(projectDir, "Blue")
+	tagger.needsRepair[projectDir] = true
+
+	s := &Scanner{
+		Targets:    []config.ResolvedTarget{setupCubaseTarget(t)},
+		Tagger:     tagger,
+		RemoveMode: true,
+	}
+
+	results, err := s.Scan([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Action != ActionUntagged {
+		t.Errorf("expected action %s regardless of NeedsRepair in remove mode, got %s", ActionUntagged, results[0].Action)
+	}
+	if len(tagger.removed) != 1 {
+		t.Errorf("expected 1 remove call, got %d", len(tagger.removed))
+	}
+	if tagger.needsRepairCalls != 0 {
+		t.Errorf("expected NeedsRepair not to be called in remove mode, got %d calls", tagger.needsRepairCalls)
 	}
 }
