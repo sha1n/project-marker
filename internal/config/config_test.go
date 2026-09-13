@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,8 +26,8 @@ func TestLoadDefaultConfig(t *testing.T) {
 	if len(targets[0].Indicators) != 1 {
 		t.Errorf("expected 1 indicator for Cubase, got %d", len(targets[0].Indicators))
 	}
-	if len(targets[0].Rules) != 1 {
-		t.Errorf("expected 1 rule for Cubase, got %d", len(targets[0].Rules))
+	if len(targets[0].Rules) != 2 {
+		t.Errorf("expected 2 rules for Cubase, got %d", len(targets[0].Rules))
 	}
 
 	if targets[1].Name != "LUNA" {
@@ -131,4 +133,53 @@ func TestDefaultConfigUsesOnlyRegisteredHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default config references unregistered handler: %v", err)
 	}
+}
+
+func TestLoadDefaultConfig_CubaseAudioFilesRule(t *testing.T) {
+	registry := engine.NewRegistry()
+	targets, err := Load(registry)
+	if err != nil {
+		t.Fatalf("failed to load default config: %v", err)
+	}
+	if len(targets) == 0 || targets[0].Name != "Cubase" {
+		t.Fatalf("expected first target to be Cubase, got %+v", targets)
+	}
+
+	withAudio := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(withAudio, "Audio"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(withAudio, "Audio", "take.wav"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hiddenOnly := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(hiddenOnly, "Audio"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hiddenOnly, "Audio", ".DS_Store"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if tags := evaluateRuleTags(t, targets[0], withAudio); len(tags) != 1 || tags[0] != "Green" {
+		t.Errorf("expected Cubase rules to yield [Green] for Audio with files, got %v", tags)
+	}
+	if tags := evaluateRuleTags(t, targets[0], hiddenOnly); len(tags) != 0 {
+		t.Errorf("expected Cubase rules to yield no tags for Audio with only hidden files, got %v", tags)
+	}
+}
+
+func evaluateRuleTags(t *testing.T, target ResolvedTarget, dir string) []string {
+	t.Helper()
+	var tags []string
+	for _, rule := range target.Rules {
+		matched, tag, err := rule.Evaluate(dir)
+		if err != nil {
+			t.Fatalf("rule evaluation failed for %s: %v", dir, err)
+		}
+		if matched {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
 }
