@@ -720,3 +720,100 @@ func TestRun_AlreadyTaggedOutput(t *testing.T) {
 		t.Errorf("expected 'already tagged' in summary, got: %s", stdout)
 	}
 }
+
+// recordingTagger records Apply/Remove calls with their tags. It does NOT
+// implement scanner.TagChecker, so every matched rule results in an Apply call.
+type recordingTagger struct {
+	applied []tagCall
+	removed []tagCall
+}
+
+type tagCall struct {
+	path string
+	tag  string
+}
+
+func (m *recordingTagger) Apply(path, tag string) error {
+	m.applied = append(m.applied, tagCall{path, tag})
+	return nil
+}
+
+func (m *recordingTagger) Remove(path, tag string) error {
+	m.removed = append(m.removed, tagCall{path, tag})
+	return nil
+}
+
+func (m *recordingTagger) appliedTags(path string) []string {
+	var tags []string
+	for _, c := range m.applied {
+		if c.path == path {
+			tags = append(tags, c.tag)
+		}
+	}
+	return tags
+}
+
+func TestRun_CubaseAudioFilesTaggedGreen(t *testing.T) {
+	root := t.TempDir()
+
+	projectA := filepath.Join(root, "A")
+	if err := os.MkdirAll(filepath.Join(projectA, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectA, "Audio"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectA, "A.cpr"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectA, "Audio", "take.wav"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	projectB := filepath.Join(root, "B")
+	if err := os.MkdirAll(filepath.Join(projectB, "Audio"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectB, "B.cpr"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectB, "Audio", ".DS_Store"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tagger := &recordingTagger{}
+	overrideNewTagger(t, tagger)
+
+	stdout, _ := captureOutput(t, func() {
+		code := run([]string{root})
+		if code != 0 {
+			t.Errorf("expected exit code 0, got %d", code)
+		}
+	})
+
+	tagsA := tagger.appliedTags(projectA)
+	if !containsString(tagsA, "Blue") {
+		t.Errorf("expected Blue applied to project A, got %v", tagsA)
+	}
+	if !containsString(tagsA, "Green") {
+		t.Errorf("expected Green applied to project A, got %v", tagsA)
+	}
+
+	tagsB := tagger.appliedTags(projectB)
+	if containsString(tagsB, "Green") {
+		t.Errorf("expected no Green applied to project B, got %v", tagsB)
+	}
+
+	if !strings.Contains(stdout, "[Green]") {
+		t.Errorf("expected '[Green]' result line in stdout, got: %s", stdout)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}

@@ -134,3 +134,324 @@ func TestHasSubdirectoryRule_InvalidMatchMode(t *testing.T) {
 		t.Error("expected error for invalid match mode")
 	}
 }
+
+func writeTestFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_TopLevelFile(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "Audio", "take.wav"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matched {
+		t.Error("expected match when Audio contains a visible file")
+	}
+	if tag != "Green" {
+		t.Errorf("expected tag Green, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_NestedFile(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "Audio", "Edits", "Takes", "take.wav"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matched {
+		t.Error("expected match when Audio contains a file in a nested subfolder")
+	}
+	if tag != "Green" {
+		t.Errorf("expected tag Green, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_OnlyHiddenFile(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "Audio", ".DS_Store"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched {
+		t.Error("expected no match when Audio contains only hidden files")
+	}
+	if tag != "" {
+		t.Errorf("expected empty tag on no match, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_FileOnlyInHiddenSubdirectory(t *testing.T) {
+	dir := t.TempDir()
+	// The file itself is visible; only its parent directory is hidden.
+	writeTestFile(t, filepath.Join(dir, "Audio", ".cache", "x.wav"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, _, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched {
+		t.Error("expected no match when files exist only inside a hidden subdirectory")
+	}
+}
+
+func TestSubdirectoryHasFilesRule_EmptySubdirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "Audio", "Empty"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, _, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched {
+		t.Error("expected no match when Audio contains no files")
+	}
+}
+
+func TestSubdirectoryHasFilesRule_MissingSubdirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, _, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error for missing subdirectory, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match when Audio does not exist")
+	}
+}
+
+func TestSubdirectoryHasFilesRule_FileNotDir(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "Audio"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, _, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatalf("expected nil error when Audio is a file, got %v", err)
+	}
+	if matched {
+		t.Error("expected no match when Audio is a file, not a directory")
+	}
+}
+
+func TestSubdirectoryHasFilesRule_AllPartialMismatch(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "Audio", "take.wav"))
+	if err := os.Mkdir(filepath.Join(dir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio", "Mixdown"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, _, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched {
+		t.Error("expected no match when only a subset of subdirectories contain files")
+	}
+}
+
+func TestSubdirectoryHasFilesRule_AllMatch(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "Audio", "take.wav"))
+	writeTestFile(t, filepath.Join(dir, "Mixdown", "mix.wav"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio", "Mixdown"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matched {
+		t.Error("expected match when all subdirectories contain files")
+	}
+	if tag != "Green" {
+		t.Errorf("expected tag Green, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_AnyMatch(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "Audio", "take.wav"))
+	if err := os.Mkdir(filepath.Join(dir, "Mixdown"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Mixdown", "Audio"},
+		Match:          "any",
+		ApplyTag:       "Green",
+	}
+
+	matched, tag, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matched {
+		t.Error("expected match when at least one subdirectory contains files")
+	}
+	if tag != "Green" {
+		t.Errorf("expected tag Green, got %q", tag)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_AnyNoneMatch(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "Audio", ".DS_Store"))
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Mixdown", "Audio"},
+		Match:          "any",
+		ApplyTag:       "Green",
+	}
+
+	matched, _, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched {
+		t.Error("expected no match when no subdirectory contains files")
+	}
+}
+
+func TestSubdirectoryHasFilesRule_DefaultMatchMode(t *testing.T) {
+	rule, err := NewSubdirectoryHasFilesRule([]string{"a"}, "", "Green")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shfRule, ok := rule.(*SubdirectoryHasFilesRule)
+	if !ok {
+		t.Fatalf("expected *SubdirectoryHasFilesRule, got %T", rule)
+	}
+	if shfRule.Match != "all" {
+		t.Errorf("expected default match mode 'all', got %q", shfRule.Match)
+	}
+	if shfRule.ApplyTag != "Green" {
+		t.Errorf("expected apply tag Green, got %q", shfRule.ApplyTag)
+	}
+	if len(shfRule.Subdirectories) != 1 || shfRule.Subdirectories[0] != "a" {
+		t.Errorf("expected subdirectories [a], got %v", shfRule.Subdirectories)
+	}
+}
+
+func TestSubdirectoryHasFilesRule_InvalidMatchMode(t *testing.T) {
+	_, err := NewSubdirectoryHasFilesRule([]string{"a"}, "invalid", "Green")
+	if err == nil {
+		t.Error("expected error for invalid match mode")
+	}
+}
+
+func TestSubdirectoryHasFilesRule_SymlinkNotCounted(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.wav")
+	writeTestFile(t, target)
+	if err := os.Mkdir(filepath.Join(dir, "Audio"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "Audio", "link.wav")); err != nil {
+		t.Fatal(err)
+	}
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	matched, _, err := rule.Evaluate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched {
+		t.Error("expected no match when Audio contains only a symlink to a file")
+	}
+}
+
+func TestSubdirectoryHasFilesRule_UnreadableNestedDirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "Audio", "Locked")
+	writeTestFile(t, filepath.Join(locked, "take.wav"))
+	if err := os.Chmod(locked, 0000); err != nil {
+		t.Fatal(err)
+	}
+	// Restore permissions so t.TempDir cleanup can remove the tree.
+	t.Cleanup(func() { _ = os.Chmod(locked, 0755) })
+
+	rule := &SubdirectoryHasFilesRule{
+		Subdirectories: []string{"Audio"},
+		Match:          "all",
+		ApplyTag:       "Green",
+	}
+
+	_, _, err := rule.Evaluate(dir)
+	if err == nil {
+		t.Error("expected error when a nested directory cannot be read")
+	}
+}
