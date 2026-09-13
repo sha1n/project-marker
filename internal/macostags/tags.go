@@ -210,13 +210,16 @@ func (t *Tagger) OrderTags(path string, tags []string) error {
 	return SetTags(path, reordered)
 }
 
-// reorderedNames returns names with the subset also present in tags rearranged, in place, to
-// follow tags' relative order; names not in tags, and tags not in names, keep their positions
-// (or are ignored, respectively). Shared by HasTagOrder and OrderTags so the two cannot disagree
-// on what "in order" means.
+// reorderedNames is shared by HasTagOrder and OrderTags so they cannot disagree on what
+// "in order" means.
 func reorderedNames(names, tags []string) []string {
 	present := make([]string, 0, len(tags))
 	for _, tag := range tags {
+		// A repeated name would otherwise consume two slots below and push a later,
+		// distinct tag out of the result, silently dropping it.
+		if slices.Contains(present, tag) {
+			continue
+		}
 		if slices.Contains(names, tag) {
 			present = append(present, tag)
 		}
