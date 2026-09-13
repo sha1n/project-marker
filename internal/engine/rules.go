@@ -88,17 +88,22 @@ func NewSubdirectoryHasFilesRule(values []string, match string, applyTag string)
 
 func (r *SubdirectoryHasFilesRule) Evaluate(dirPath string) (bool, string, error) {
 	requireAll := r.Match != matchAny
+	var unknown []error
 	for _, sub := range r.Subdirectories {
 		qualifies, err := subdirectoryHasFiles(dirPath, sub)
-		if err != nil {
-			return false, "", err
-		}
-		if qualifies && !requireAll {
+		switch {
+		case err != nil:
+			// An undecided subdirectory must not abort evaluation: a later one
+			// may still settle the outcome regardless of it.
+			unknown = append(unknown, err)
+		case qualifies && !requireAll:
 			return true, r.ApplyTag, nil
-		}
-		if !qualifies && requireAll {
+		case !qualifies && requireAll:
 			return false, "", nil
 		}
+	}
+	if len(unknown) > 0 {
+		return false, "", errors.Join(unknown...)
 	}
 	if requireAll {
 		return true, r.ApplyTag, nil
@@ -111,9 +116,14 @@ func subdirectoryHasFiles(parent, name string) (bool, error) {
 		return false, nil
 	}
 	root := filepath.Join(parent, name)
+	var readErrs []error
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// Record instead of aborting: a visible file elsewhere in the tree
+			// still qualifies the subdirectory. Returning nil skips the
+			// contents of the directory that failed to read.
+			readErrs = append(readErrs, err)
+			return nil
 		}
 		hidden := strings.HasPrefix(d.Name(), ".")
 		if d.IsDir() {
@@ -130,8 +140,8 @@ func subdirectoryHasFiles(parent, name string) (bool, error) {
 	if errors.Is(err, errFileFound) {
 		return true, nil
 	}
-	if err != nil {
-		return false, fmt.Errorf("scanning %q for files: %w", root, err)
+	if len(readErrs) > 0 {
+		return false, fmt.Errorf("scanning %q for files: %w", root, errors.Join(readErrs...))
 	}
 	return false, nil
 }
