@@ -90,4 +90,4 @@ template: |
 
   $CHANGES
 
-  **Full Changelog**: https://github.com/sha1n/project-marker/compare/$BASE_TAG...$NEXT_TAG
+  **Full Changelog**: https://github.com/sha1n/project-marker/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
