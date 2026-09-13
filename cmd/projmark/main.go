@@ -163,8 +163,6 @@ func run(args []string) int {
 	logger.Debug("starting scan", "roots", dirs, "remove_mode", *removeMode, "dry_run", *dryRun)
 
 	var allResults []scanner.Result
-	var actionedCount int
-	var alreadyCount int
 
 	for i, dir := range dirs {
 		if i > 0 {
@@ -184,19 +182,14 @@ func run(args []string) int {
 			switch r.Action {
 			case scanner.ActionTagged:
 				_, _ = fmt.Fprintf(w, "  ✓ Tagged\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
-				actionedCount++
 			case scanner.ActionUntagged:
 				_, _ = fmt.Fprintf(w, "  ✓ Untagged\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
-				actionedCount++
 			case scanner.ActionWouldTag:
 				_, _ = fmt.Fprintf(w, "  ~ Would tag\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
-				actionedCount++
 			case scanner.ActionWouldUntag:
 				_, _ = fmt.Fprintf(w, "  ~ Would untag\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
-				actionedCount++
 			case scanner.ActionAlreadyTagged:
 				_, _ = fmt.Fprintf(w, "  = Already tagged\t[%s]\t%s\t(%s)\n", r.Tag, rel, r.TargetName)
-				alreadyCount++
 			case scanner.ActionSkipped:
 				_, _ = fmt.Fprintf(w, "  ✗ Skipped\t\t%s\t(%s)\n", rel, r.TargetName)
 			}
@@ -216,7 +209,7 @@ func run(args []string) int {
 			actionWord = "Would tag"
 		}
 	}
-	skippedCount := len(allResults) - actionedCount - alreadyCount
+	actionedCount, alreadyCount, skippedCount := summarize(allResults)
 	fmt.Printf("\nComplete! %s %d director%s", actionWord, actionedCount, pluralize(actionedCount))
 	if skippedCount > 0 {
 		fmt.Printf(" (%d skipped)", skippedCount)
@@ -272,6 +265,25 @@ func findRoot(path string, roots []string) string {
 		}
 	}
 	return best
+}
+
+func summarize(results []scanner.Result) (actioned, already, skipped int) {
+	actionedPaths := make(map[string]struct{})
+	alreadyPaths := make(map[string]struct{})
+	skippedPaths := make(map[string]struct{})
+
+	for _, r := range results {
+		switch r.Action {
+		case scanner.ActionTagged, scanner.ActionUntagged, scanner.ActionWouldTag, scanner.ActionWouldUntag:
+			actionedPaths[r.Path] = struct{}{}
+		case scanner.ActionAlreadyTagged:
+			alreadyPaths[r.Path] = struct{}{}
+		case scanner.ActionSkipped:
+			skippedPaths[r.Path] = struct{}{}
+		}
+	}
+
+	return len(actionedPaths), len(alreadyPaths), len(skippedPaths)
 }
 
 func pluralize(n int) string {
