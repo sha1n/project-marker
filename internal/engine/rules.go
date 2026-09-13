@@ -39,28 +39,7 @@ func NewHasSubdirectoryRule(values []string, match string, applyTag string) (Tag
 }
 
 func (r *HasSubdirectoryRule) Evaluate(dirPath string) (bool, string, error) {
-	if r.Match == matchAny {
-		return r.evaluateAny(dirPath)
-	}
-	return r.evaluateAll(dirPath)
-}
-
-func (r *HasSubdirectoryRule) evaluateAll(dirPath string) (bool, string, error) {
-	for _, sub := range r.Subdirectories {
-		if !isSubdirectory(dirPath, sub) {
-			return false, "", nil
-		}
-	}
-	return true, r.ApplyTag, nil
-}
-
-func (r *HasSubdirectoryRule) evaluateAny(dirPath string) (bool, string, error) {
-	for _, sub := range r.Subdirectories {
-		if isSubdirectory(dirPath, sub) {
-			return true, r.ApplyTag, nil
-		}
-	}
-	return false, "", nil
+	return evaluateSubdirectories(dirPath, r.Subdirectories, r.Match != matchAny, r.ApplyTag, isSubdirectory)
 }
 
 // SubdirectoryHasFilesRule checks that subdirectories contain at least one
@@ -87,18 +66,21 @@ func NewSubdirectoryHasFilesRule(values []string, match string, applyTag string)
 }
 
 func (r *SubdirectoryHasFilesRule) Evaluate(dirPath string) (bool, string, error) {
-	requireAll := r.Match != matchAny
+	return evaluateSubdirectories(dirPath, r.Subdirectories, r.Match != matchAny, r.ApplyTag, subdirectoryHasFiles)
+}
+
+func evaluateSubdirectories(dirPath string, subdirs []string, requireAll bool, applyTag string, qualifies func(parent, name string) (bool, error)) (bool, string, error) {
 	var unknown []error
-	for _, sub := range r.Subdirectories {
-		qualifies, err := subdirectoryHasFiles(dirPath, sub)
+	for _, sub := range subdirs {
+		ok, err := qualifies(dirPath, sub)
 		switch {
 		case err != nil:
 			// An undecided subdirectory must not abort evaluation: a later one
 			// may still settle the outcome regardless of it.
 			unknown = append(unknown, err)
-		case qualifies && !requireAll:
-			return true, r.ApplyTag, nil
-		case !qualifies && requireAll:
+		case ok && !requireAll:
+			return true, applyTag, nil
+		case !ok && requireAll:
 			return false, "", nil
 		}
 	}
@@ -106,7 +88,7 @@ func (r *SubdirectoryHasFilesRule) Evaluate(dirPath string) (bool, string, error
 		return false, "", errors.Join(unknown...)
 	}
 	if requireAll {
-		return true, r.ApplyTag, nil
+		return true, applyTag, nil
 	}
 	return false, "", nil
 }
@@ -165,10 +147,14 @@ func resolveMatchMode(match string) (string, error) {
 	return match, nil
 }
 
-func isSubdirectory(parent, name string) bool {
-	info, err := os.Stat(filepath.Join(parent, name))
-	if err != nil {
-		return false
+func isSubdirectory(parent, name string) (bool, error) {
+	path := filepath.Join(parent, name)
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
 	}
-	return info.IsDir()
+	if err != nil {
+		return false, fmt.Errorf("checking %q: %w", path, err)
+	}
+	return info.IsDir(), nil
 }
