@@ -666,3 +666,24 @@ func TestTagger_OrderTags_IgnoresMissingTag(t *testing.T) {
 
 	assertRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
 }
+
+func TestTagger_OrderTags_DuplicateTagNamesTreatedAsFirstOccurrence(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Blue\n4", "Green\n2"})
+	tagger := &Tagger{}
+
+	if err := tagger.OrderTags(dir, []string{"Green", "Green", "Blue"}); err != nil {
+		t.Fatalf("OrderTags failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
+	assertLabelColor(t, dir, 4)
+
+	has, err := tagger.HasTagOrder(dir, []string{"Green", "Green", "Blue"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTagOrder=true when a duplicate tag name is treated as its first occurrence")
+	}
+}
