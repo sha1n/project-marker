@@ -375,6 +375,22 @@ func TestTagger_Apply_RepairsLegacyBareNameTags(t *testing.T) {
 	}
 }
 
+func TestTagger_Apply_RepairsDuplicateLegacyEntries(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	// Older projmark versions appended a bare name next to Finder's colored entry.
+	writeRawTagEntries(t, dir, []string{"Orange\n7", "Blue", "Orange"})
+
+	if err := tagger.Apply(dir, "Orange"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Orange\n7", "Blue\n4"})
+	assertLabelColor(t, dir, 4)
+	assertTags(t, dir, []string{"Orange", "Blue"})
+}
+
 func TestFinderWrittenTags(t *testing.T) {
 	dir := newTestDir(t, "project")
 	tagger := &Tagger{}
