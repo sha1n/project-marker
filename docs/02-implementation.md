@@ -35,7 +35,7 @@ Logic parsing `default.yaml` into Go structs using `gopkg.in/yaml.v3`.
 
 ### Filesystem and OS Dependencies
 #### [NEW] [tags.go](file:///Users/shai/code/project-marker/internal/macostags/tags.go)
-Wraps Apple `xattr` toolset (`com.apple.metadata:_kMDItemUserTags`).
+Writes Finder tags through the Foundation tagging API (`NSURLTagNamesKey`, via cgo) so macOS maintains tag colors and the Finder label color; reads parse `com.apple.metadata:_kMDItemUserTags` directly.
 #### [NEW] [scanner.go](file:///Users/shai/code/project-marker/internal/scanner/scanner.go)
 Main directory walking loop, tying config targets to engine validators.
 

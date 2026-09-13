@@ -1,7 +1,7 @@
 # Test Plan: Generic Project Marker
 
 ## 1. Overview
-This test plan validates all functionality of the `projmark` CLI. It guarantees correct file-system traversal, accurate target identification based on dynamic configuration handlers, reliable tagging on macOS via `xattr`, and comprehensive edge case handling.
+This test plan validates all functionality of the `projmark` CLI. It guarantees correct file-system traversal, accurate target identification based on dynamic configuration handlers, reliable tagging on macOS via the system tagging API, and comprehensive edge case handling.
 
 ## 2. Static Handler Verification (The Registry)
 To ensure the dynamic configuration maps safely to actual implementations, all indicator and rule types must be represented by static string constants in the code (e.g., `engine.IndicatorFileExtension`, `engine.RuleHasSubdirectory`). 
@@ -39,8 +39,10 @@ To ensure the dynamic configuration maps safely to actual implementations, all i
 * *Edge Case*: If the YAML requests a rule type (e.g., `has_file_pattern`) that isn't defined in the static constants, parsing must instantly fail rather than failing silently during a directory sweep.
 
 ### 3.3 `internal/macostags` (macOS Integration)
-**Objective**: Verify system-level `xattr` interactions for adding/removing Finder tags (`com.apple.metadata:_kMDItemUserTags`).
-* *Write Tag*: Create a temp file, serialize the binary plist data, apply the extended attribute, read it back, and assert the tags match exactly.
+**Objective**: Verify Finder tags are written through the system tagging API (`NSURLTagNamesKey`) and read back from `com.apple.metadata:_kMDItemUserTags`.
+* *Write Tag*: Tag a temp directory, read it back, and assert the tag names match exactly.
+* *Color Metadata*: Assert stored entries carry the color index (e.g. `Blue\n4`) and the `com.apple.FinderInfo` label color reflects the last colored tag.
+* *Legacy Repair*: A directory holding bare-name entries written by earlier versions is reported as not tagged and is rewritten with color metadata on apply.
 * *Remove Tag*: Verify the attribute is successfully deleted when explicitly asked.
 * *Edge Case*: Attempting to read/write tags on a missing file returns a predictable, non-panic error.
 * *Edge Case*: Accessing files on a read-only filesystem or isolated sandbox triggers `permission denied`, which should be captured and logged as skipped rather than crashing the program.
