@@ -391,6 +391,38 @@ func TestTagger_Apply_RepairsDuplicateLegacyEntries(t *testing.T) {
 	assertTags(t, dir, []string{"Orange", "Blue"})
 }
 
+func TestTagger_Apply_RepairsDuplicateEntriesWithoutLegacy(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	writeRawTagEntries(t, dir, []string{"Orange\n7", "Orange\n7"})
+
+	has, err := tagger.HasTag(dir, "Orange")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if has {
+		t.Error("expected HasTag=false for duplicate colored entries")
+	}
+
+	if err := tagger.Apply(dir, "Orange"); err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Orange\n7"})
+	assertLabelColor(t, dir, 7)
+
+	has, err = tagger.HasTag(dir, "Orange")
+	if err != nil {
+		t.Fatalf("HasTag failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTag=true after repair")
+	}
+
+	assertTags(t, dir, []string{"Orange"})
+}
+
 func TestFinderWrittenTags(t *testing.T) {
 	dir := newTestDir(t, "project")
 	tagger := &Tagger{}
