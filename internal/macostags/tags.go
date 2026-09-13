@@ -10,9 +10,20 @@ package macostags
 #include <string.h>
 #import <Foundation/Foundation.h>
 
-// Returns NULL on success, or a malloc'd error message the caller must free.
-static char *projmark_set_tag_names(const char *path, const char **tags, int count) {
+// Returns NULL on success, or a malloc'd localized description the caller must free.
+// On failure, also populates outDomain (malloc'd, caller must free when non-NULL), outCode,
+// and outHasPosix/outPosixCode with the NSPOSIXErrorDomain code from NSUnderlyingErrorKey when
+// present, since Foundation reports the caller-facing errno there rather than in the top-level
+// NSError for most Cocoa/OSStatus-domain failures.
+static char *projmark_set_tag_names(const char *path, const char **tags, int count,
+                                     char **outDomain, long long *outCode,
+                                     int *outHasPosix, int *outPosixCode) {
 	@autoreleasepool {
+		*outDomain = NULL;
+		*outCode = 0;
+		*outHasPosix = 0;
+		*outPosixCode = 0;
+
 		NSString *nsPath = [NSString stringWithUTF8String:path];
 		if (nsPath == nil) {
 			return strdup("path is not valid UTF-8");
@@ -31,6 +42,17 @@ static char *projmark_set_tag_names(const char *path, const char **tags, int cou
 			if (error == nil) {
 				return strdup("unknown error");
 			}
+			*outDomain = strdup(error.domain.UTF8String);
+			*outCode = (long long)error.code;
+
+			NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
+			if ([underlying.domain isEqualToString:NSPOSIXErrorDomain]) {
+				*outHasPosix = 1;
+				*outPosixCode = (int)underlying.code;
+			} else if ([error.domain isEqualToString:NSPOSIXErrorDomain]) {
+				*outHasPosix = 1;
+				*outPosixCode = (int)error.code;
+			}
 			return strdup(error.localizedDescription.UTF8String);
 		}
 		return NULL;
@@ -42,6 +64,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 	"unsafe"
@@ -76,11 +99,24 @@ func SetTags(path string, tags []string) error {
 		tagsPtr = &cTags[0]
 	}
 
-	if cErr := C.projmark_set_tag_names(cPath, tagsPtr, C.int(len(cTags))); cErr != nil {
-		defer C.free(unsafe.Pointer(cErr))
-		return fmt.Errorf("set tags %s: %s", path, C.GoString(cErr))
+	var cDomain *C.char
+	var cCode C.longlong
+	var cHasPosix, cPosixCode C.int
+
+	cErr := C.projmark_set_tag_names(cPath, tagsPtr, C.int(len(cTags)), &cDomain, &cCode, &cHasPosix, &cPosixCode)
+	if cErr == nil {
+		return nil
 	}
-	return nil
+	defer C.free(unsafe.Pointer(cErr))
+
+	var domain string
+	if cDomain != nil {
+		defer C.free(unsafe.Pointer(cDomain))
+		domain = C.GoString(cDomain)
+	}
+	description := C.GoString(cErr)
+	c := causeFromNSError(domain, int64(cCode), cHasPosix != 0, int(cPosixCode), description)
+	return fmt.Errorf("cannot update Finder tags on %q: %w", path, c)
 }
 
 // GetTags reads the Finder tag names from a file or directory in stored order.
@@ -155,7 +191,7 @@ func readEntries(path string) ([]string, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("getxattr %s: %w", path, err)
+		return nil, readError(path, err)
 	}
 
 	buf := make([]byte, size)
@@ -164,18 +200,123 @@ func readEntries(path string) ([]string, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("getxattr %s: %w", path, err)
+		return nil, readError(path, err)
 	}
 
 	var entries []string
 	if _, err := plist.Unmarshal(buf[:n], &entries); err != nil {
-		return nil, fmt.Errorf("unmarshal tags %s: %w", path, err)
+		return nil, fmt.Errorf("cannot read Finder tags on %q: the stored tags are malformed", path)
 	}
 	return entries, nil
 }
 
+// readError wraps a getxattr failure with the read-path message prefix and the shared cause
+// mapping, so read and write failures for the same errno report identical reason text.
+func readError(path string, err error) error {
+	errno, _ := err.(unix.Errno)
+	return fmt.Errorf("cannot read Finder tags on %q: %w", path, causeFromErrno(errno, err))
+}
+
 func isAbsent(err error) bool {
 	return errors.Is(err, unix.ENOATTR) || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR)
+}
+
+// cause is the friendly reason behind a tagging failure. It is shared by the getxattr read path
+// and the Foundation write path so both report identical text for the same underlying errno, and
+// so errors.Is matches fs.ErrNotExist, fs.ErrPermission, unix.EROFS, errors.ErrUnsupported, or the
+// errno itself, per the mapping table in the design brief.
+type cause struct {
+	reason string
+	errno  unix.Errno // 0 when the failure could not be mapped to a POSIX errno
+}
+
+func (c *cause) Error() string { return c.reason }
+
+func (c *cause) Is(target error) bool {
+	switch c.errno {
+	case unix.ENOENT, unix.ENOTDIR:
+		if target == fs.ErrNotExist {
+			return true
+		}
+	case unix.EACCES, unix.EPERM:
+		if target == fs.ErrPermission {
+			return true
+		}
+	case unix.EROFS:
+		if target == unix.EROFS {
+			return true
+		}
+	case unix.ENOTSUP:
+		if target == errors.ErrUnsupported {
+			return true
+		}
+	}
+	if errno, ok := target.(unix.Errno); ok {
+		return c.errno != 0 && c.errno == errno
+	}
+	return false
+}
+
+// friendlyReason is the single source of truth for the mapping table's <reason> column. It
+// falls back to description (the errno string or NSError localizedDescription) for causes that
+// aren't in the table.
+func friendlyReason(errno unix.Errno, description string) string {
+	switch errno {
+	case unix.ENOENT, unix.ENOTDIR:
+		return "no such file or directory"
+	case unix.EACCES, unix.EPERM:
+		return "permission denied"
+	case unix.EROFS:
+		return "the volume is read-only"
+	case unix.ENOTSUP:
+		return "the file system does not support Finder tags"
+	default:
+		return description
+	}
+}
+
+// causeFromErrno maps a getxattr failure to the shared cause vocabulary. err's own description
+// (equal to errno.Error() when errno is known) is used verbatim for unmapped causes.
+func causeFromErrno(errno unix.Errno, err error) error {
+	return &cause{reason: friendlyReason(errno, err.Error()), errno: errno}
+}
+
+// causeFromNSError maps a Foundation NSError to the shared cause vocabulary. It prefers an
+// underlying NSPOSIXErrorDomain errno (surfaced by the bridge via NSUnderlyingErrorKey) and
+// otherwise falls back to the documented NSCocoaErrorDomain/NSOSStatusErrorDomain code crossovers,
+// empirically confirmed for ENOENT (-43) and EACCES (-5000) against this macOS version.
+func causeFromNSError(domain string, code int64, hasPosix bool, posixErrno int, description string) error {
+	errno := errnoFromNSError(domain, code, hasPosix, posixErrno)
+	return &cause{reason: friendlyReason(errno, description), errno: errno}
+}
+
+func errnoFromNSError(domain string, code int64, hasPosix bool, posixErrno int) unix.Errno {
+	if hasPosix {
+		return unix.Errno(posixErrno)
+	}
+	switch domain {
+	case "NSPOSIXErrorDomain":
+		return unix.Errno(code)
+	case "NSCocoaErrorDomain":
+		switch code {
+		case 4, 260:
+			return unix.ENOENT
+		case 257, 513:
+			return unix.EACCES
+		case 642:
+			return unix.EROFS
+		}
+	case "NSOSStatusErrorDomain":
+		switch code {
+		case -43, -120:
+			return unix.ENOENT
+		case -54, -61, -5000:
+			return unix.EACCES
+		case -44, -46:
+			return unix.EROFS
+		}
+	}
+	return 0
 }
 
 // tagNames de-duplicates because earlier versions could store a bare duplicate of a
