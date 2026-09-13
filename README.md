@@ -105,10 +105,15 @@ targets:
         value:
           - "Mixdown"
         apply_tag: "Blue"
+      - type: "subdirectory_has_files"
+        match: "any"
+        value:
+          - "Audio"
+        apply_tag: "Green"
 
   - name: "LUNA"
     indicators:
-      - type: "directory_extension"
+      - type: "file_extension"
         value: ".luna"
     rules:
       - type: "has_subdirectory"
@@ -122,7 +127,9 @@ Each target type is defined by:
 
 - **name** -- a human-readable label for the project type.
 - **indicators** -- patterns used to identify a project directory. `file_extension` matches files within the directory, while `directory_extension` matches the directory name itself.
-- **rules** -- conditions that must be met for a tag to be applied. The `has_subdirectory` rule checks for the presence of specific subdirectories (e.g., `Mixdown` or `Exported Files`).
+- **rules** -- conditions that must be met for a tag to be applied. Each rule lists subdirectory names under `value`; `match` controls whether `all` (default) or `any` of them must satisfy the rule.
+  - `has_subdirectory` -- the subdirectory exists (e.g., `Mixdown` or `Exported Files`).
+  - `subdirectory_has_files` -- the subdirectory contains at least one visible regular file at any depth (e.g., recorded takes under `Audio`). Dotfiles such as `.DS_Store`, hidden directories, and symlinks are ignored.
 - **apply_tag** -- the macOS Finder tag to apply. Supported tag names include `Red`, `Orange`, `Yellow`, `Green`, `Blue`, `Purple`, and `Gray`.
 
 ## How It Works
