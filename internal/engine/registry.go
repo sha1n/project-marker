@@ -21,7 +21,8 @@ const (
 
 // Supported rule type constants.
 const (
-	RuleHasSubdirectory = "has_subdirectory"
+	RuleHasSubdirectory      = "has_subdirectory"
+	RuleSubdirectoryHasFiles = "subdirectory_has_files"
 )
 
 // IndicatorFactory creates an Indicator from a config value.
@@ -48,6 +49,7 @@ func NewRegistry() *Registry {
 	r.RegisterIndicator(IndicatorFileExists, NewFileExistsIndicator)
 
 	r.RegisterRule(RuleHasSubdirectory, NewHasSubdirectoryRule)
+	r.RegisterRule(RuleSubdirectoryHasFiles, NewSubdirectoryHasFilesRule)
 
 	return r
 }
@@ -93,5 +95,6 @@ func AllSupportedIndicators() []string {
 func AllSupportedRules() []string {
 	return []string{
 		RuleHasSubdirectory,
+		RuleSubdirectoryHasFiles,
 	}
 }
