@@ -3,7 +3,8 @@ targets:
     indicators:
       - type: "file_extension"
         value: ".cpr"
-    # Finder colors a folder by its last tag: the last matching rule wins.
+    # The last matching rule's tag is placed after the others, so it sets the folder's Finder
+    # color unless a colored tag was added afterward by hand.
     rules:
       - type: "subdirectory_has_files"
         match: "any"

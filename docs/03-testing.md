@@ -45,7 +45,7 @@ To ensure the dynamic configuration maps safely to actual implementations, all i
 * *Legacy Repair*: A directory holding bare-name entries written by earlier versions is reported as not tagged and is rewritten with color metadata on apply.
 * *Remove Tag*: Verify the attribute is successfully deleted when explicitly asked.
 * *Edge Case*: Attempting to read/write tags on a missing file returns a predictable, non-panic error.
-* *Edge Case*: Accessing files on a read-only filesystem or isolated sandbox triggers `permission denied`, which should be captured and logged as skipped rather than crashing the program.
+* *Edge Case*: Accessing files on a read-only filesystem triggers `the volume is read-only`, and an isolated sandbox restriction triggers `permission denied`; both are captured and logged as skipped rather than crashing the program.
 
 ### 3.4 `internal/scanner` (Directory Traversal)
 **Objective**: Ensure the `filepath.WalkDir` logic executes rules efficiently and respects OS boundaries.
