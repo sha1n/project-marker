@@ -137,10 +137,6 @@ func TestHasSubdirectoryRule_InvalidMatchMode(t *testing.T) {
 	}
 }
 
-// setupHasSubdirectoryPermissionFixture builds a project dir containing a
-// real "Mixdown" subdirectory and a "Locked/Inner" subdirectory whose parent
-// is chmod 0000, so stat-ing "Locked/Inner" fails with a permission error
-// rather than a not-exist error. "Missing" is left absent.
 func setupHasSubdirectoryPermissionFixture(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -151,6 +147,8 @@ func setupHasSubdirectoryPermissionFixture(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(locked, "Inner"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	// Locking the parent, not "Inner" itself, makes stat-ing "Locked/Inner"
+	// fail with a permission error rather than a not-exist error.
 	lockTestDir(t, locked)
 	return dir
 }
