@@ -183,6 +183,19 @@ func (t *Tagger) HasTag(path, tag string) (bool, error) {
 	return slices.Contains(names, tag) && !needsRepair(entries, names), nil
 }
 
+// HasTagOrder reports whether the given tags appear on path in the given relative order.
+// Tags that are not present on path are ignored.
+func (t *Tagger) HasTagOrder(path string, tags []string) (bool, error) {
+	return false, nil
+}
+
+// OrderTags rearranges the given tags within the positions they already occupy on path so
+// they appear in the given relative order. Other tags keep their positions, and tags that
+// are not present are ignored. Nothing is written when the order already holds.
+func (t *Tagger) OrderTags(path string, tags []string) error {
+	return nil
+}
+
 // readEntries is read directly from the xattr rather than through Foundation: it keeps
 // per-directory scans cheap and exposes the raw entry format needed to detect legacy tags.
 func readEntries(path string) ([]string, error) {

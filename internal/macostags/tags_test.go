@@ -576,3 +576,93 @@ func TestGetTags_MalformedTagsXattr_ReportsFriendlyError(t *testing.T) {
 		t.Errorf("error message: expected %q, got %v", wantMsg, err)
 	}
 }
+
+func TestTagger_HasTagOrder(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
+	tagger := &Tagger{}
+
+	has, err := tagger.HasTagOrder(dir, []string{"Green", "Blue"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTagOrder=true when tags already appear in the given order")
+	}
+
+	has, err = tagger.HasTagOrder(dir, []string{"Blue", "Green"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if has {
+		t.Error("expected HasTagOrder=false when tags appear in the reverse order")
+	}
+
+	has, err = tagger.HasTagOrder(dir, []string{"Green", "Missing", "Blue"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTagOrder=true when an absent tag is ignored")
+	}
+}
+
+func TestTagger_HasTagOrder_UntaggedPath(t *testing.T) {
+	dir := newTestDir(t, "project")
+	tagger := &Tagger{}
+
+	has, err := tagger.HasTagOrder(dir, []string{"Green", "Blue"})
+	if err != nil {
+		t.Fatalf("HasTagOrder failed: %v", err)
+	}
+	if !has {
+		t.Error("expected HasTagOrder=true for an untagged path since no tag is out of order")
+	}
+}
+
+func TestTagger_OrderTags_RearrangesAroundOtherTags(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Blue\n4", "Red\n6", "Green\n2"})
+	tagger := &Tagger{}
+
+	if err := tagger.OrderTags(dir, []string{"Green", "Blue"}); err != nil {
+		t.Fatalf("OrderTags failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Green\n2", "Red\n6", "Blue\n4"})
+	assertLabelColor(t, dir, 4)
+}
+
+func TestTagger_OrderTags_AlreadyOrdered_PerformsNoWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses permission checks")
+	}
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
+
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	tagger := &Tagger{}
+	if err := tagger.OrderTags(dir, []string{"Green", "Blue"}); err != nil {
+		t.Errorf("expected no write (and no error) when order already holds, got: %v", err)
+	}
+}
+
+func TestTagger_OrderTags_IgnoresMissingTag(t *testing.T) {
+	dir := newTestDir(t, "project")
+	writeRawTagEntries(t, dir, []string{"Blue\n4", "Green\n2"})
+	tagger := &Tagger{}
+
+	if err := tagger.OrderTags(dir, []string{"Green", "Missing", "Blue"}); err != nil {
+		t.Fatalf("OrderTags failed: %v", err)
+	}
+
+	assertRawTagEntries(t, dir, []string{"Green\n2", "Blue\n4"})
+}
