@@ -21,6 +21,8 @@ Download the latest binary for your platform from the [Releases](https://github.
 
 ### From Source
 
+Building requires macOS with the Xcode Command Line Tools (`xcode-select --install`), because Finder tags are written through the Foundation framework via cgo.
+
 ```bash
 git clone https://github.com/sha1n/project-marker.git
 cd project-marker

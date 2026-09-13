@@ -111,12 +111,12 @@ go-build-current:
 .PHONY: go-build-darwin-amd64
 go-build-darwin-amd64:
 	@echo "  >  Building darwin amd64 binary..."
-	@GOOS=$(GOOS_DARWIN) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-darwin-$(GOARCH_AMD64) $(GOBASE)/cmd/projmark
+	@CGO_ENABLED=1 GOOS=$(GOOS_DARWIN) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-darwin-$(GOARCH_AMD64) $(GOBASE)/cmd/projmark
 
 .PHONY: go-build-darwin-arm64
 go-build-darwin-arm64:
 	@echo "  >  Building darwin arm64 binary..."
-	@GOOS=$(GOOS_DARWIN) GOARCH=$(GOARCH_ARM64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-darwin-$(GOARCH_ARM64) $(GOBASE)/cmd/projmark
+	@CGO_ENABLED=1 GOOS=$(GOOS_DARWIN) GOARCH=$(GOARCH_ARM64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-darwin-$(GOARCH_ARM64) $(GOBASE)/cmd/projmark
 
 .PHONY: go-get
 go-get:
