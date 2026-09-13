@@ -44,11 +44,11 @@ func NewHasSubdirectoryRule(values []string, match string, applyTag string) (Tag
 }
 
 func (r *HasSubdirectoryRule) Evaluate(dirPath string) (bool, string, error) {
-	mode, err := resolveMatchMode(string(r.Match))
+	requireAll, err := r.Match.requireAll()
 	if err != nil {
 		return false, "", err
 	}
-	return evaluateSubdirectories(dirPath, r.Subdirectories, mode == MatchAll, r.ApplyTag, isSubdirectory)
+	return evaluateSubdirectories(dirPath, r.Subdirectories, requireAll, r.ApplyTag, isSubdirectory)
 }
 
 // SubdirectoryHasFilesRule checks that subdirectories contain at least one
@@ -75,11 +75,11 @@ func NewSubdirectoryHasFilesRule(values []string, match string, applyTag string)
 }
 
 func (r *SubdirectoryHasFilesRule) Evaluate(dirPath string) (bool, string, error) {
-	mode, err := resolveMatchMode(string(r.Match))
+	requireAll, err := r.Match.requireAll()
 	if err != nil {
 		return false, "", err
 	}
-	return evaluateSubdirectories(dirPath, r.Subdirectories, mode == MatchAll, r.ApplyTag, subdirectoryHasFiles)
+	return evaluateSubdirectories(dirPath, r.Subdirectories, requireAll, r.ApplyTag, subdirectoryHasFiles)
 }
 
 func evaluateSubdirectories(dirPath string, subdirs []string, requireAll bool, applyTag string, qualifies func(parent, name string) (bool, error)) (bool, string, error) {
@@ -158,6 +158,14 @@ func resolveMatchMode(match string) (MatchMode, error) {
 		return "", fmt.Errorf("invalid match mode %q: must be \"all\" or \"any\"", match)
 	}
 	return MatchMode(match), nil
+}
+
+func (m MatchMode) requireAll() (bool, error) {
+	mode, err := resolveMatchMode(string(m))
+	if err != nil {
+		return false, err
+	}
+	return mode == MatchAll, nil
 }
 
 func isSubdirectory(parent, name string) (bool, error) {
