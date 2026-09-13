@@ -186,14 +186,51 @@ func (t *Tagger) HasTag(path, tag string) (bool, error) {
 // HasTagOrder reports whether the given tags appear on path in the given relative order.
 // Tags that are not present on path are ignored.
 func (t *Tagger) HasTagOrder(path string, tags []string) (bool, error) {
-	return false, nil
+	entries, err := readEntries(path)
+	if err != nil {
+		return false, err
+	}
+	names := tagNames(entries)
+	return slices.Equal(names, reorderedNames(names, tags)), nil
 }
 
 // OrderTags rearranges the given tags within the positions they already occupy on path so
 // they appear in the given relative order. Other tags keep their positions, and tags that
 // are not present are ignored. Nothing is written when the order already holds.
 func (t *Tagger) OrderTags(path string, tags []string) error {
-	return nil
+	entries, err := readEntries(path)
+	if err != nil {
+		return err
+	}
+	names := tagNames(entries)
+	reordered := reorderedNames(names, tags)
+	if slices.Equal(names, reordered) {
+		return nil
+	}
+	return SetTags(path, reordered)
+}
+
+// reorderedNames returns names with the subset also present in tags rearranged, in place, to
+// follow tags' relative order; names not in tags, and tags not in names, keep their positions
+// (or are ignored, respectively). Shared by HasTagOrder and OrderTags so the two cannot disagree
+// on what "in order" means.
+func reorderedNames(names, tags []string) []string {
+	present := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if slices.Contains(names, tag) {
+			present = append(present, tag)
+		}
+	}
+
+	reordered := slices.Clone(names)
+	next := 0
+	for i, name := range names {
+		if slices.Contains(present, name) {
+			reordered[i] = present[next]
+			next++
+		}
+	}
+	return reordered
 }
 
 // readEntries is read directly from the xattr rather than through Foundation: it keeps
