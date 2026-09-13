@@ -112,12 +112,21 @@ func (r *SubdirectoryHasFilesRule) Evaluate(dirPath string) (bool, string, error
 }
 
 func subdirectoryHasFiles(parent, name string) (bool, error) {
-	if !isSubdirectory(parent, name) {
+	root := filepath.Join(parent, name)
+	// Lstat rather than isSubdirectory: a symlinked subdirectory must not
+	// qualify, consistent with symlinks inside the tree being ignored.
+	info, err := os.Lstat(root)
+	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
-	root := filepath.Join(parent, name)
+	if err != nil {
+		return false, fmt.Errorf("checking %q: %w", root, err)
+	}
+	if !info.IsDir() {
+		return false, nil
+	}
 	var readErrs []error
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// Record instead of aborting: a visible file elsewhere in the tree
 			// still qualifies the subdirectory. Returning nil skips the
