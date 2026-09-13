@@ -3,17 +3,18 @@ targets:
     indicators:
       - type: "file_extension"
         value: ".cpr"
+    # Finder colors a folder by its last tag: the last matching rule wins.
     rules:
-      - type: "has_subdirectory"
-        match: "any"
-        value:
-          - "Mixdown"
-        apply_tag: "Blue"
       - type: "subdirectory_has_files"
         match: "any"
         value:
           - "Audio"
         apply_tag: "Green"
+      - type: "has_subdirectory"
+        match: "any"
+        value:
+          - "Mixdown"
+        apply_tag: "Blue"
 
   - name: "LUNA"
     indicators:

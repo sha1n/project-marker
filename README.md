@@ -101,17 +101,18 @@ targets:
     indicators:
       - type: "file_extension"
         value: ".cpr"
+    # Finder colors a folder by its last tag: the last matching rule wins.
     rules:
-      - type: "has_subdirectory"
-        match: "any"
-        value:
-          - "Mixdown"
-        apply_tag: "Blue"
       - type: "subdirectory_has_files"
         match: "any"
         value:
           - "Audio"
         apply_tag: "Green"
+      - type: "has_subdirectory"
+        match: "any"
+        value:
+          - "Mixdown"
+        apply_tag: "Blue"
 
   - name: "LUNA"
     indicators:
@@ -129,7 +130,7 @@ Each target type is defined by:
 
 - **name** -- a human-readable label for the project type.
 - **indicators** -- patterns used to identify a project directory. `file_extension` matches any entry (file or directory) within the directory that has the given extension, while `directory_extension` matches the directory name itself.
-- **rules** -- conditions that must be met for a tag to be applied. Each rule lists subdirectory names under `value`; `match` controls whether `all` (default) or `any` of them must satisfy the rule.
+- **rules** -- conditions that must be met for a tag to be applied. Each rule lists subdirectory names under `value`; `match` controls whether `all` (default) or `any` of them must satisfy the rule. When several rules match the same directory, the last matching rule's tag determines the directory's Finder color.
   - `has_subdirectory` -- the subdirectory exists (e.g., `Mixdown` or `Exported Files`); symlinks are followed, so a symlink to a directory counts, unlike `subdirectory_has_files` below. An unreadable path is reported as an evaluation error unless another listed subdirectory settles the outcome.
   - `subdirectory_has_files` -- the subdirectory contains at least one visible regular file at any depth (e.g., recorded takes under `Audio`). Dotfiles such as `.DS_Store`, hidden directories, and symlinks are ignored; symlinks are never followed, so a subdirectory that is itself a symlink does not match. Unreadable directories are skipped: the rule still matches if a visible file is found elsewhere, otherwise it is reported as an evaluation error.
   - Evaluation errors are always logged as warnings on stderr, and with `-v` also appear inline in the scan trace; the failing rule is skipped for that project directory.
