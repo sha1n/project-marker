@@ -39,7 +39,7 @@ format: go-format
 .PHONY: lint
 lint: go-lint golangci-lint go-format-check
 
-## build: Builds binaries for all supported platforms
+## build: Builds binaries for all supported platforms and the host platform
 .PHONY: build
 build: go-build
 
@@ -101,7 +101,7 @@ go-format-check:
 	fi
 
 .PHONY: go-build
-go-build: go-get go-build-darwin-amd64 go-build-darwin-arm64
+go-build: go-get go-build-current go-build-darwin-amd64 go-build-darwin-arm64
 
 .PHONY: go-build-current
 go-build-current:

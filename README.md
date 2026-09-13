@@ -145,7 +145,7 @@ Each target type is defined by:
 
 | Command | Description |
 |---------|-------------|
-| `make build` | Build binaries for all supported platforms |
+| `make build` | Build binaries for all supported platforms and the host platform |
 | `make test` | Run all tests |
 | `make lint` | Run all linters (go vet, golangci-lint, format check) |
 | `make format` | Format Go source files |
